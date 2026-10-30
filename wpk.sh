@@ -34,12 +34,13 @@ REG_FILE="/root/wpk-sites.reg"
 VHOST_TEMPLATE="/root/wpk.vhost.template"
 WP_CONFIG_EXTRA="/root/wpk-config-extra.php"
 
-BANNER='     ██╗██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗     ██╗██╗
-     ██║██║   ██║████╗ ████║██╔══██╗████╗  ██║     ██║██║
-     ██║██║   ██║██╔████╔██║███████║██╔██╗ ██║     ██║██║
-██   ██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║██   ██║██║
-╚█████╔╝╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║╚█████╔╝██║
- ╚════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚════╝ ╚═╝'
+BANNER='      ## ##     ## ##     ##    ###    ##    ##       ## ####
+      ## ##     ## ###   ###   ## ##   ###   ##       ##  ##
+      ## ##     ## #### ####  ##   ##  ####  ##       ##  ##
+      ## ##     ## ## ### ## ##     ## ## ## ##       ##  ##
+##    ## ##     ## ##     ## ######### ##  #### ##    ##  ##
+##    ## ##     ## ##     ## ##     ## ##   ### ##    ##  ##
+ ######   #######  ##     ## ##     ## ##    ##  ######  ####'
 C_G="\033[0;32m"; C_Y="\033[0;33m"; C_R="\033[0;31m"; C_B="\033[1;34m"; C_0="\033[0m"
 touch "$REG_FILE" 2>/dev/null && chmod 600 "$REG_FILE" 2>/dev/null
 ok()   { echo -e "  ${C_G}✓${C_0} $1"; }
@@ -76,7 +77,7 @@ socket_path() { echo "/run/php/php${PHPV}-fpm-wp.sock"; }
 #  COMMAND: base — provisioning server kosong
 # ==============================================================
 cmd_base() {
-  echo -e "${C_G}$BANNER${C_0}"
+  echo -e "\033[1;92m$BANNER\033[0m"
   hdr "WPK — INSTALASI SERVER  ($(hostname))"
   [ "$(id -u)" = 0 ] || { err "harus root"; exit 1; }
   NTOT=8
@@ -709,7 +710,7 @@ cmd_banner() {
 cmd_menu() {
   while true; do
     clear 2>/dev/null
-    echo -e "${C_G}$BANNER${C_0}"
+    echo -e "\033[1;92m$BANNER\033[0m"
     echo -e "${C_B}  ╔══════════════════════════════════════════╗${C_0}"
     echo -e "${C_B}  ║   WPK — WordPress Kit (All-in-One)       ║${C_0}"
     echo -e "${C_B}  ╚══════════════════════════════════════════╝${C_0}"
