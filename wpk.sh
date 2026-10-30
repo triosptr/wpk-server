@@ -34,6 +34,17 @@ REG_FILE="/root/wpk-sites.reg"
 VHOST_TEMPLATE="/root/wpk.vhost.template"
 WP_CONFIG_EXTRA="/root/wpk-config-extra.php"
 
+BANNER="    888888888     888888b     d888       d8888888b    8888888888888888 
+      \"88b888     8888888b   d8888      d888888888b   888  \"88b  888   
+       888888     88888888b.d88888     d88P88888888b  888   888  888   
+       888888     888888Y88888P888    d88P 888888Y88b 888   888  888   
+       888888     888888 Y888P 888   d88P  888888 Y88b888   888  888   
+       888888     888888  Y8P  888  d88P   888888  Y88888   888  888   
+       88PY88b. .d88P888   \"   888 d8888888888888   Y8888   88P  888   
+       888 \"Y88888P\" 888       888d88P     888888    Y888   8888888888 
+     .d88P                                                .d88P        
+   .d88P\"                                               .d88P\"         
+  888P\"                                                888P\"           "
 C_G="\033[0;32m"; C_Y="\033[0;33m"; C_R="\033[0;31m"; C_B="\033[1;34m"; C_0="\033[0m"
 touch "$REG_FILE" 2>/dev/null && chmod 600 "$REG_FILE" 2>/dev/null
 ok()   { echo -e "  ${C_G}✓${C_0} $1"; }
@@ -70,6 +81,7 @@ socket_path() { echo "/run/php/php${PHPV}-fpm-wp.sock"; }
 #  COMMAND: base — provisioning server kosong
 # ==============================================================
 cmd_base() {
+  echo -e "${C_G}$BANNER${C_0}"
   hdr "WPK — INSTALASI SERVER  ($(hostname))"
   [ "$(id -u)" = 0 ] || { err "harus root"; exit 1; }
   NTOT=8
@@ -666,15 +678,46 @@ cmd_optimize() {
 }
 
 # ==============================================================
+# ==============================================================
+#  COMMAND: banner — pasang tulisan JUMANJI di login SSH (MOTD)
+# ==============================================================
+cmd_banner() {
+  local D="/etc/motd"
+  if [ "$1" = "off" ]; then
+    echo -e "(login biasa — tanpa banner)" > "$D"
+    ok "MOTD banner dimatikan"
+    return
+  fi
+  {
+    echo ""
+    echo -e "$BANNER"
+    echo -e "  ${C_B}WPK — WordPress Kit${C_0}  |  $(hostname)  |  $(date +%Y)"
+    echo -e "  ${C_Y}Welcome to the jungle.${C_0}"
+    echo ""
+    echo "  Server : $(hostname) ($(curl -s -m 3 ifconfig.me 2>/dev/null || echo 'ip-unknown'))"
+    echo "  RAM    : $(free -h | sed -n 2p | awk '{print $3" / "$2}')"
+    echo "  Sites  : $(wc -l < /root/wpk-sites.reg 2>/dev/null | tr -d ' ') terdaftar"
+    echo "  Help   : wpk  (menu)  |  wpk status  |  wpk verify"
+    echo ""
+  } > "$D"
+  # update-shown motd kadang menimpa — matikan (aman jika tak ada)
+  if [ -f /etc/update-motd.d/10-help-text ]; then
+    chmod a-x /etc/update-motd.d/10-help-text 2>/dev/null || true
+  fi
+  ok "Banner JUMANJI terpasang di /etc/motd (tampil tiap login SSH)"
+  echo -e "$BANNER"
+}
+
+# ==============================================================
 #  MENU INTERAKTIF
 # ==============================================================
 cmd_menu() {
   while true; do
     clear 2>/dev/null
-    echo -e "${C_B}"
-    echo "  ╔══════════════════════════════════════════╗"
-    echo "  ║   WPK — WordPress Kit (All-in-One)       ║"
-    echo "  ╚══════════════════════════════════════════╝${C_0}"
+    echo -e "${C_G}$BANNER${C_0}"
+    echo -e "${C_B}  ╔══════════════════════════════════════════╗${C_0}"
+    echo -e "${C_B}  ║   WPK — WordPress Kit (All-in-One)       ║${C_0}"
+    echo -e "${C_B}  ╚══════════════════════════════════════════╝${C_0}"
     echo "   1) Install base server (sekali saja)"
     echo "   2) Tambah site WordPress"
     echo "   3) Daftar site"
@@ -686,6 +729,7 @@ cmd_menu() {
     echo "   9) Hapus site"
     echo "  10) Security audit"
     echo "  11) Optimasi / bersih-bersih"
+    echo "  12) Pasang banner JUMANJI (MOTD)"
     echo "   0) Keluar"
     echo ""
     read -rp "  Pilih: " p
@@ -701,6 +745,7 @@ cmd_menu() {
       9) read -rp "Domain: " d; cmd_remove "$d"; read -rp "Enter...";;
       10) cmd_security; read -rp "Enter...";;
       11) cmd_optimize; read -rp "Enter...";;
+      12) cmd_banner; read -rp "Enter...";;
       0) exit 0;;
     esac
   done
@@ -722,8 +767,9 @@ case "$1" in
   remove)     shift; cmd_remove "$@";;
   security)   cmd_security;;
   verify)     cmd_verify;;
+  banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
   *) echo "WPK v1.0 — perintah tidak dikenal: $1"
-     echo "Pakai: wpk | base | verify | add | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
+     echo "Pakai: wpk | base | verify | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
