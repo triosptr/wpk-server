@@ -451,7 +451,10 @@ cmd_add() {
 # ==============================================================
 cmd_ssl() {
   local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk ssl <domain>"; exit 1; }
-  if [ -d "/etc/letsencrypt/live/$D" ]; then ok "SSL sudah ada: $D"; return; fi
+  if [ -d "/etc/letsencrypt/live/$D" ] && grep -q "listen 443" "/etc/nginx/sites-available/$D" 2>/dev/null; then
+    ok "SSL sudah ada: $D"; return
+  fi
+  [ -d "/etc/letsencrypt/live/$D" ] && ok "cert ada tapi vhost belum HTTPS — regen vhost..."
   [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada"; exit 1; }
   # pastikan vhost pakai ^~ untuk acme (override deny dotfiles regex)
   if [ -f "/etc/nginx/sites-available/$D" ] && grep -q "^    location /\.well-known/acme-challenge/" "/etc/nginx/sites-available/$D"; then
