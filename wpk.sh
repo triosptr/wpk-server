@@ -241,6 +241,8 @@ open_file_cache_errors on;
 EOF
   # gzip/sendfile TIDAK ditulis di sini — sudah ada di nginx.conf utama (hindari duplikat)
   mkdir -p /etc/nginx/snippets /etc/nginx/fcgi_cache /var/www/_letsencrypt
+  chmod 755 /var/www /var/www/_letsencrypt
+  mkdir -p /var/www/_letsencrypt/.well-known/acme-challenge && chmod -R 755 /var/www/_letsencrypt/.well-known
   cat > /etc/nginx/snippets/security_headers.conf <<'EOF'
 add_header X-Frame-Options "SAMEORIGIN" always;
 add_header X-Content-Type-Options "nosniff" always;
@@ -451,6 +453,8 @@ cmd_ssl() {
   local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk ssl <domain>"; exit 1; }
   if [ -d "/etc/letsencrypt/live/$D" ]; then ok "SSL sudah ada: $D"; return; fi
   [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada"; exit 1; }
+  chmod -R 755 /var/www/_letsencrypt 2>/dev/null
+  mkdir -p /var/www/_letsencrypt/.well-known/acme-challenge
   certbot certonly --webroot -w /var/www/_letsencrypt -d "$D" \
     --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || { err "certbot gagal (cek DNS resolve + proxy CF OFF)"; return; }
 
