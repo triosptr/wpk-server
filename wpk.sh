@@ -705,6 +705,79 @@ cmd_banner() {
 }
 
 # ==============================================================
+# ==============================================================
+#  COMMAND: fix — diagnosa & perbaiki poin verifikasi yang gagal
+# ==============================================================
+cmd_fix() {
+  hdr "PERBAIKAN OTOMATIS — POIN GAGAL"
+  local fixed=0
+
+  # --- 5: WP-CLI ---
+  if ! wp --version >/dev/null 2>&1; then
+    warn "WP-CLI rusak/belum ada — download ulang..."
+    curl -sS https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o /usr/local/bin/wp
+    chmod +x /usr/local/bin/wp
+    wp --version >/dev/null 2>&1 && { ok "WP-CLI diperbaiki ($(wp --version 2>/dev/null | grep -oE 'WP-CLI [0-9.]+'))"; fixed=$((fixed+1)); } || err "WP-CLI masih gagal (cek koneksi ke github.com)"
+  else ok "WP-CLI sebenarnya OK (false alarm versi lama)"; fi
+
+  # --- 11: port sensitif ---
+  local opened; opened=$(ss -tuln | awk '{print $5}' | grep -oE ':(3306|25|6379)$' | sort -u | tr '\n' ' ')
+  if [ -n "$opened" ]; then
+    warn "port terbuka: $opened — dianalisis & ditutup..."
+    # 3306: MariaDB bind luar -> paksa localhost
+    if echo "$opened" | grep -q 3306; then
+      grep -q "^bind-address" /etc/mysql/mariadb.conf.d/99-wpk.cnf && sed -i 's/^bind-address.*/bind-address            = 127.0.0.1/' /etc/mysql/mariadb.conf.d/99-wpk.cnf
+      # conf lain bisa override — pastikan tidak ada yang bind 0.0.0.0
+      grep -rl "bind-address.*0.0.0.0" /etc/mysql/ 2>/dev/null | xargs -r sed -i 's/bind-address.*0.0.0.0/bind-address = 127.0.0.1/'
+      systemctl restart mariadb
+    fi
+    # 25: postfix/exim idle -> matikan & stop
+    if echo "$opened" | grep -q ":25"; then
+      systemctl stop postfix exim4 2>/dev/null; systemctl disable postfix exim4 2>/dev/null
+    fi
+    # 6379: redis -> bind localhost saja
+    if echo "$opened" | grep -q 6379; then
+      [ -f /etc/redis/redis.conf ] && sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf && systemctl restart redis-server 2>/dev/null
+    fi
+    # lapis terakhir: blok via ufw secara eksplisit
+    for pt in 3306 25 6379; do ufw deny "$pt"/tcp >/dev/null 2>&1; done
+    sleep 1
+    [ "$(ss -tuln | awk '{print $5}' | grep -cE ':(3306|25|6379)$')" = "0" ] && { ok "semua port sensitif tertutup"; fixed=$((fixed+1)); } || err "masih ada port terbuka — laporkan output 'ss -tuln'"
+  else ok "port sensitif sebenarnya OK (false alarm: listen ::1/[::] dihitung luar)"; fi
+
+  # --- 15: JIT ---
+  local jit_val; jit_val=$(php -r 'echo ini_get("opcache.jit_buffer_size");' 2>/dev/null)
+  if [ -z "$jit_val" ] || [ "$jit_val" = "0" ]; then
+    warn "JIT belum aktif — perbaiki konfigurasi opcache..."
+    cat > "/etc/php/$PHPV/fpm/conf.d/90-opcache.ini" <<'EOF'
+opcache.enable=1
+opcache.enable_cli=1
+opcache.memory_consumption=128
+opcache.interned_strings_buffer=16
+opcache.max_accelerated_files=16000
+opcache.validate_timestamps=1
+opcache.revalidate_freq=60
+opcache.save_comments=1
+opcache.jit=tracing
+opcache.jit_buffer_size=64M
+EOF
+    # hapus file_cache (bisa konflik di beberapa setup) — tetap ada jit murni memory
+    mkdir -p /var/cache/php-opcache && chown www-data:www-data /var/cache/php-opcache
+    php-fpm$PHPV -t >/dev/null 2>&1 && systemctl restart php$PHPV-fpm
+  fi
+  # cek ulang: angka byte ATAU "64M" keduanya dianggap aktif
+  jit_val=$(php -r 'echo ini_get("opcache.jit_buffer_size");' 2>/dev/null)
+  if [ -n "$jit_val" ] && [ "$jit_val" != "0" ]; then
+    ok "PHP JIT aktif (jit_buffer_size=$jit_val)"; fixed=$((fixed+1))
+  else err "JIT masih mati — PHP build mungkin tanpa opcache JIT (cek: php -v | head -1)"; fi
+
+  echo ""
+  if [ $fixed -gt 0 ]; then
+    ok "$fixed poin diperbaiki — jalankan verifikasi ulang:"
+  fi
+  echo -e "  ${C_B}wpk verify${C_0}"
+}
+
 #  MENU INTERAKTIF
 # ==============================================================
 cmd_menu() {
@@ -726,6 +799,7 @@ cmd_menu() {
     echo "  10) Security audit"
     echo "  11) Optimasi / bersih-bersih"
     echo "  12) Pasang banner JUMANJI (MOTD)"
+    echo "  13) PERBAIKI poin verifikasi yang gagal"
     echo "   0) Keluar"
     echo ""
     read -rp "  Pilih: " p
@@ -742,6 +816,7 @@ cmd_menu() {
       10) cmd_security; read -rp "Enter...";;
       11) cmd_optimize; read -rp "Enter...";;
       12) cmd_banner; read -rp "Enter...";;
+      13) cmd_fix; read -rp "Enter...";;
       0) exit 0;;
     esac
   done
@@ -769,9 +844,10 @@ case "$1" in
   remove)     shift; cmd_remove "$@";;
   security)   cmd_security;;
   verify)     cmd_verify;;
+  fix)        cmd_fix;;
   banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
   *) echo "WPK v1.0 — perintah tidak dikenal: $1"
-     echo "Pakai: wpk | base | verify | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
+     echo "Pakai: wpk | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
