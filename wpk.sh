@@ -238,12 +238,8 @@ open_file_cache max=10000 inactive=30s;
 open_file_cache_valid 60s;
 open_file_cache_min_uses 2;
 open_file_cache_errors on;
-gzip on;
-gzip_vary on;
-gzip_comp_level 5;
-gzip_min_length 256;
-gzip_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml image/svg+xml;
 EOF
+  # gzip/sendfile TIDAK ditulis di sini — sudah ada di nginx.conf utama (hindari duplikat)
   mkdir -p /etc/nginx/snippets /etc/nginx/fcgi_cache /var/www/_letsencrypt
   cat > /etc/nginx/snippets/security_headers.conf <<'EOF'
 add_header X-Frame-Options "SAMEORIGIN" always;
@@ -253,7 +249,7 @@ add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 EOF
   # hapus sisa konflik duplikat dari versi lama
-  sed -i '/^sendfile on;$/d; /^tcp_nopush on;$/d; /^tcp_nodelay on;$/d; /^directio 8m;$/d; /^output_buffers 2 32k;$/d' /etc/nginx/conf.d/wpk.conf 2>/dev/null
+  sed -i -E '/^\s*(sendfile|tcp_nopush|tcp_nodelay|directio|output_buffers|gzip|gzip_vary|gzip_comp_level|gzip_min_length|gzip_types) /d' /etc/nginx/conf.d/wpk.conf 2>/dev/null
   # main ctx: worker tuning (conf.d tidak bisa menampung main ctx)
   NG=/etc/nginx/nginx.conf
   grep -q "worker_rlimit_nofile 65535" $NG || {
@@ -940,7 +936,7 @@ cmd_fix() {
 
   # --- nginx: bersihkan duplikat dari versi lama + reload ---
   if [ -f /etc/nginx/conf.d/wpk.conf ]; then
-    sed -i '/^sendfile on;$/d; /^tcp_nopush on;$/d; /^tcp_nodelay on;$/d; /^directio 8m;$/d; /^output_buffers 2 32k;$/d' /etc/nginx/conf.d/wpk.conf
+    sed -i -E '/^\s*(sendfile|tcp_nopush|tcp_nodelay|directio|output_buffers|gzip|gzip_vary|gzip_comp_level|gzip_min_length|gzip_types) /d' /etc/nginx/conf.d/wpk.conf
     nginx -t >/dev/null 2>&1 && systemctl reload nginx && ok "nginx config bersih & reload" || err "nginx masih error: $(nginx -t 2>&1 | tail -1)"
   fi
 
