@@ -938,6 +938,12 @@ cmd_fix() {
   detect_phpver
   local fixed=0
 
+  # --- nginx: bersihkan duplikat dari versi lama + reload ---
+  if [ -f /etc/nginx/conf.d/wpk.conf ]; then
+    sed -i '/^sendfile on;$/d; /^tcp_nopush on;$/d; /^tcp_nodelay on;$/d; /^directio 8m;$/d; /^output_buffers 2 32k;$/d' /etc/nginx/conf.d/wpk.conf
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx && ok "nginx config bersih & reload" || err "nginx masih error: $(nginx -t 2>&1 | tail -1)"
+  fi
+
   # --- 5: WP-CLI ---
   if ! wp --version >/dev/null 2>&1; then
     warn "WP-CLI rusak/belum ada — download ulang..."
