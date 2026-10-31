@@ -749,6 +749,7 @@ cmd_site() {
     esac
     [ "$p" != "0" ] && read -rp "  Enter..."
   done
+  [ -z "$IN_MENU" ] && { ok "kembali ke menu utama..."; cmd_menu; }
 }
 
 # ---------- helper WordPress per-domain ----------
@@ -909,6 +910,7 @@ cmd_server() {
     esac
     [ "$p" != "0" ] && read -rp "  Enter..."
   done
+  [ -z "$IN_MENU" ] && { ok "kembali ke menu utama..."; cmd_menu; }
 }
 
 server_domain_menu() {
@@ -1148,6 +1150,7 @@ cmd_repair() {
 #  MENU INTERAKTIF
 # ==============================================================
 cmd_menu() {
+  IN_MENU=1
   while true; do
     clear 2>/dev/null
     echo -e "\033[1;92m$BANNER\033[0m"
