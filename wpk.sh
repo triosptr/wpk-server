@@ -475,8 +475,10 @@ CFGEOF
     ok "vhost aktif (HTTP)"
   else ok "vhost sudah ada"; fi
 
-  # SSL
-  cmd_ssl "$D"
+  # SSL (kalau DNS belum siap → lanjut HTTP, SSL bisa 'wpk ssl <domain>' belakangan)
+  if ! cmd_ssl "$D"; then
+    warn "SSL dilewati dulu — site jalan via HTTP. Setelah DNS beres: wpk ssl $D"
+  fi
 
   # WP install — lengkap otomatis (tanpa wizard web)
   local URL="https://$D"; [ -d "/etc/letsencrypt/live/$D" ] || URL="http://$D"
@@ -537,7 +539,22 @@ cmd_ssl() {
     ok "SSL sudah ada: $D"; return
   fi
   [ -d "/etc/letsencrypt/live/$D" ] && ok "cert ada tapi vhost belum HTTPS — regen vhost..."
-  [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada"; exit 1; }
+  [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada — wpk add $D dulu"; exit 1; }
+
+  # pre-flight DNS (hindari buang kuota rate-limit Let's Encrypt: 5 gagal/jam)
+  local RESOLVED_IP SERVER_IP
+  RESOLVED_IP=$(getent ahostsv4 "$D" 2>/dev/null | awk '{print $1}' | head -1)
+  SERVER_IP=$(curl -s -m 3 ifconfig.me 2>/dev/null)
+  if [ -z "$RESOLVED_IP" ]; then
+    err "DNS $D belum resolve — buat A record di Cloudflare (proxy awan MATI/grey), tunggu 1-2 menit, ulangi"
+    return 1
+  fi
+  if [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" != "$SERVER_IP" ]; then
+    err "DNS $D -> $RESOLVED_IP, bukan IP server ini ($SERVER_IP)"
+    echo -e "   ${C_Y}Perbaiki A record di Cloudflare (proxy MATI/grey), lalu ulangi${C_0}"
+    return 1
+  fi
+  ok "DNS OK: $D -> $RESOLVED_IP"
   # pastikan vhost pakai ^~ untuk acme (override deny dotfiles regex)
   if [ -f "/etc/nginx/sites-available/$D" ] && grep -q "^    location /\.well-known/acme-challenge/" "/etc/nginx/sites-available/$D"; then
     sed -i 's|^    location /\.well-known/acme-challenge/|    location ^~ /.well-known/acme-challenge/|' "/etc/nginx/sites-available/$D"
