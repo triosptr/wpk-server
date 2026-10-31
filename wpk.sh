@@ -1079,22 +1079,80 @@ cmd_repair() {
   detect_phpver
   [ -d "/var/www/$D" ] || { err "docroot tidak ada"; exit 1; }
 
-  # vhost: regen dari template (bawa konfig terbaru)
+  # WP core download ulang kalau index.php tidak ada
+  if [ ! -f "/var/www/$D/index.php" ]; then
+    wp core download --path="/var/www/$D" --allow-root --force --quiet && ok "WP core di-download ulang"
+  fi
+
+  # wp-config: ekstrak kredensial dari file lama → buat ulang BERSIH (perbaiki "Strange wp-config")
+  local DBNAME DBUSER DBPASS
+  if [ -f "/var/www/$D/wp-config.php" ]; then
+    DBNAME=$(grep -oP "DB_NAME'[^']*'\K[^']+" "/var/www/$D/wp-config.php" | head -1)
+    DBUSER=$(grep -oP "DB_USER'[^']*'\K[^']+" "/var/www/$D/wp-config.php" | head -1)
+    DBPASS=$(grep -oP "DB_PASSWORD'[^']*'\K[^']+" "/var/www/$D/wp-config.php" | head -1)
+    if [ -z "$DBNAME" ] || [ -z "$DBUSER" ]; then
+      DBNAME="wp_${D//./_}"; DBUSER="u_${D//./_}"
+      DBPASS=$(openssl rand -base64 18 | tr -d '/+=')
+      mysql -e "CREATE DATABASE IF NOT EXISTS \`$DBNAME\`; CREATE USER IF NOT EXISTS '$DBUSER'@'localhost' IDENTIFIED BY '$DBPASS'; GRANT ALL ON \`$DBNAME\`.* TO '$DBUSER'@'localhost'; FLUSH PRIVILEGES;"
+    fi
+    wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet --allow-root --force
+    grep -q DISALLOW_FILE_EDIT "/var/www/$D/wp-config.php" || cat "$WP_CONFIG_EXTRA" >> "/var/www/$D/wp-config.php"
+    chown www-data:www-data "/var/www/$D/wp-config.php"
+    chmod 600 "/var/www/$D/wp-config.php"
+    ok "wp-config dibuat ulang bersih (creds: $DBNAME/$DBUSER)"
+  else
+    err "wp-config tidak ada — jalankan wpk add"; exit 1
+  fi
+
+  # vhost: regen dari template — TAPI template di disk mungkin lama; regen template dulu dari wpk.sh
+  if grep -q "TEOF" /root/wpk.sh 2>/dev/null; then
+    # ekstrak template dari dalam wpk.sh (blok TEOF...TEOF)
+    sed -n "/cat > .*VHOST_TEMPLATE.*<<'TEOF'/,/^TEOF$/p" /root/wpk.sh | sed '1d;$d' > "$VHOST_TEMPLATE"
+  fi
   sed -e "s/__DOMAIN__/$D/g" -e "s|__SOCKET__|$(socket_path)|g" "$VHOST_TEMPLATE" > "/etc/nginx/sites-available/$D"
   ln -sf "/etc/nginx/sites-available/$D" "/etc/nginx/sites-enabled/$D"
-  nginx -t >/dev/null 2>&1 && systemctl reload nginx && ok "vhost OK" || err "nginx test gagal: $(nginx -t 2>&1 | tail -1)"
 
-  # wp-config: buat ulang kalau hilang (pakai kredensial registry / minta DB)
-  local DBNAME="wp_${D//./_}" DBUSER="u_${D//./_}"
-  local DBPASS; DBPASS=$(reg_get "$D" 5)
-  if [ ! -f "/var/www/$D/wp-config.php" ]; then
-    [ -z "$DBPASS" ] && { err "domain tak terdaftar & wp-config hilang — jalankan wpk add"; exit 1; }
-    mysql -e "CREATE DATABASE IF NOT EXISTS \`$DBNAME\`; CREATE USER IF NOT EXISTS '$DBUSER'@'localhost' IDENTIFIED BY '$DBPASS'; GRANT ALL ON \`$DBNAME\`.* TO '$DBUSER'@'localhost'; FLUSH PRIVILEGES;"
-    wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet --allow-root
-    grep -q DISALLOW_FILE_EDIT "/var/www/$D/wp-config.php" || cat "$WP_CONFIG_EXTRA" >> "/var/www/$D/wp-config.php"
-    chown -R www-data:www-data "/var/www/$D"
-    ok "wp-config dibuat ulang"
-  else ok "wp-config ada"; fi
+  # SSL: kalau cert sudah ada, tulis vhost HTTPS via generator (sama seperti cmd_ssl)
+  if [ -d "/etc/letsencrypt/live/$D" ]; then
+    python3 - "$D" <<'PYEOF'
+import sys, re
+d = sys.argv[1]
+tmpl = open("/root/wpk.vhost.template").read()
+body = tmpl.replace("__DOMAIN__", d).replace("__SOCKET__", "/run/php/php8.3-fpm-wp.sock")
+m = re.search(r"server\s*\{(.*)\}\s*$", body, re.S)
+inner = m.group(1).rstrip() if m else body
+vhost = f"""# WPK vhost HTTPS - {d}
+server {{
+    listen 443 ssl http2;
+    server_name {d};
+    root /var/www/{d};
+    index index.php;
+{inner}
+    ssl_certificate /etc/letsencrypt/live/{d}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{d}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    include /etc/nginx/snippets/security_headers.conf;
+}}
+
+# HTTP -> HTTPS
+server {{
+    listen 80;
+    server_name {d};
+    location ^~ /.well-known/acme-challenge/ {{ root /var/www/_letsencrypt; }}
+    location / {{ return 301 https://$host$request_uri; }}
+}}
+"""
+open(f"/etc/nginx/sites-available/{d}", "w").write(vhost)
+PYEOF
+  fi
+
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx
+    ok "vhost OK"
+  else
+    err "nginx test gagal: $(nginx -t 2>&1 | tail -1)"
+  fi
 
   # SSL kalau belum ada
   [ -d "/etc/letsencrypt/live/$D" ] || cmd_ssl "$D"
