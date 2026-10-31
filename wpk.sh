@@ -23,7 +23,8 @@
 #     wpk security            → audit & re-apply security
 #     wpk optimize            → re-apply optimasi / bersih-bersih
 #
-#  v1.1 — Dabara untuk Trio. Idempotent: aman dijalankan ulang.
+#  v2.0 — Dabara untuk Trio. Idempotent: aman dijalankan ulang.
+#  Menu utama: SITE (install/manage WP) + SERVER (restart/cache/domain/SSL).
 #  Output install rapi + checklist verifikasi otomatis di akhir.
 # ==============================================================
 set +e
@@ -675,6 +676,229 @@ cmd_optimize() {
 
 # ==============================================================
 # ==============================================================
+# ==============================================================
+#  COMMAND: site — menu manage per-domain (WordPress lengkap)
+# ==============================================================
+cmd_site() {
+  local D="$1"
+  if [ -z "$D" ]; then
+    hdr "PILIH SITE"
+    [ -s "$REG_FILE" ] || { warn "belum ada site — wpk add <domain> dulu"; return; }
+    local i=1; local DOMAINS=()
+    while IFS='|' read -r d _; do
+      [ -z "$d" ] && continue
+      echo "   $i) $d"
+      DOMAINS+=("$d"); i=$((i+1))
+    done < "$REG_FILE"
+    echo "    0) batal"
+    read -rp "  Nomor site: " n
+    [ "$n" = "0" ] || [ -z "$n" ] && return
+    D="${DOMAINS[$((n-1))]}"
+  fi
+  [ -d "/var/www/$D" ] || { err "/var/www/$D tidak ada"; return; }
+
+  while true; do
+    echo ""
+    echo -e "${C_B}  ── MANAGE: $D ──${C_0}"
+    echo "   1) Install WordPress lengkap (core+plugin+tema+SEO+security)"
+    echo "   2) Info & kredensial"
+    echo "   3) Plugin: list / install / aktif / update"
+    echo "   4) Tema: aktifkan / update"
+    echo "   5) User: tambah admin / reset password"
+    echo "   6) Cache: purge (FastCGI) + rewrite flush"
+    echo "   7) Backup sekarang"
+    echo "   8) Update semua (core+plugin+tema)"
+    echo "   9) Debug: on/off (WP_DEBUG)"
+    echo "  10) Maintenance mode: on/off"
+    echo "   0) kembali"
+    read -rp "  Pilih: " p
+    case $p in
+      1) wp_full_install "$D";;
+      2) cmd_creds "$D"; echo "  Docroot : /var/www/$D"; echo "  PHP ver : $PHPV";;
+      3) wp_plugin_menu "$D";;
+      4) wp_theme_menu "$D";;
+      5) wp_user_menu "$D";;
+      6) wp_purge "$D";;
+      7) cmd_backup "$D";;
+      8) cmd_update "$D";;
+      9) wp_debug_toggle "$D";;
+      10) wp_maintenance "$D";;
+      0) break;;
+    esac
+    [ "$p" != "0" ] && read -rp "  Enter..."
+  done
+}
+
+# ---------- helper WordPress per-domain ----------
+wp_full_install() {
+  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  hdr "INSTALL WORDPRESS LENGKAP — $D"
+  $wp core is-installed --quiet 2>/dev/null || { err "WP core belum terinstall — wpk add $D dulu"; return; }
+
+  echo -e "  Menginstall paket standar..."
+  # plugin standar AdSense-ready (pola situs Trio)
+  for pl in classic-editor wordpress-seo ad-inserter easy-table-of-contents; do
+    $wp plugin install "$pl" --activate --quiet 2>/dev/null && ok "plugin: $pl" || warn "plugin $pl gagal (mungkin sudah ada)"
+  done
+  # tema Kadence
+  $wp theme install kadence --quiet 2>/dev/null && $wp theme activate kadence --quiet 2>/dev/null && ok "tema: Kadence aktif"
+  # hapus tema default & plugin bawaan
+  for t in $($wp theme list --status=inactive --field=name 2>/dev/null); do $wp theme delete "$t" --quiet 2>/dev/null; done
+  $wp plugin delete akismet hello --quiet 2>/dev/null
+  # komentar mati total
+  $wp option update default_comment_status closed --quiet
+  $wp option update default_ping_status closed --quiet
+  $wp option update comment_moderation 1 --quiet
+  $wp option update thread_comments "" --quiet
+  # hapus konten bawaan
+  $wp post delete 1 2 3 --force --quiet 2>/dev/null
+  # permalink + diskusi
+  $wp rewrite structure '/%postname%/' --hard --quiet
+  $wp rewrite flush --hard --quiet
+  # yoast welcome config skip
+  $wp option set yoast_mailsense_summary_emails_disabled '' --quiet 2>/dev/null
+  # auto-update plugin+tema
+  $wp plugin auto-updates enable --all --quiet 2>/dev/null
+  $wp theme auto-updates enable --all --quiet 2>/dev/null
+  # favicon placeholder di-set saat add logo; site icon via media nanti
+  wp_purge "$D"
+  ok "INSTALL LENGKAP — site siap isi konten"
+}
+
+wp_plugin_menu() {
+  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  echo "  a) list  b) install  c) aktif  d) deaktif  e) hapus"
+  read -rp "  pilih: " sp; read -rp "  slug plugin (kosongkan utk list): " slug
+  case $sp in
+    a) $wp plugin list;;
+    b) [ -n "$slug" ] && $wp plugin install "$slug" --activate && ok "installed: $slug";;
+    c) [ -n "$slug" ] && $wp plugin activate "$slug" && ok "aktif: $slug";;
+    d) [ -n "$slug" ] && $wp plugin deactivate "$slug" && ok "nonaktif: $slug";;
+    e) [ -n "$slug" ] && $wp plugin uninstall "$slug" --deactivate && ok "hapus: $slug";;
+  esac
+}
+
+wp_theme_menu() {
+  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  echo "  a) list  b) aktifkan  c) update semua"
+  read -rp "  pilih: " sp; read -rp "  nama tema: " slug
+  case $sp in
+    a) $wp theme list;;
+    b) [ -n "$slug" ] && $wp theme activate "$slug" && ok "tema aktif: $slug";;
+    c) $wp theme update --all && ok "tema updated";;
+  esac
+}
+
+wp_user_menu() {
+  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  echo "  a) list user  b) tambah admin  c) reset password user"
+  read -rp "  pilih: " sp
+  case $sp in
+    a) $wp user list --fields=ID,user_login,roles,email;;
+    b) read -rp "  username baru: " u; read -rp "  email: " e
+       local np; np=$(openssl rand -base64 14 | tr -d '/+=')
+       $wp user create "$u" "$e" --role=administrator --user_pass="$np" --quiet &&        ok "admin dibuat: $u / $np (CATAT SEKARANG)";;
+    c) read -rp "  username: " u
+       local np; np=$(openssl rand -base64 14 | tr -d '/+=')
+       $wp user update "$u" --user_pass="$np" --quiet && ok "password $u = $np";;
+  esac
+}
+
+wp_purge() {
+  local D="$1"
+  rm -rf /etc/nginx/fcgi_cache/* 2>/dev/null
+  sudo -u www-data wp --path="/var/www/$D" rewrite flush --hard --quiet 2>/dev/null
+  sudo -u www-data wp --path="/var/www/$D" cache flush --quiet 2>/dev/null
+  systemctl reload nginx
+  ok "cache $D di-purge (FastCGI + WP object cache + rewrite)"
+}
+
+wp_debug_toggle() {
+  local D="$1"; local cfg="/var/www/$D/wp-config.php"
+  if grep -q "define( *'WP_DEBUG'.*true" "$cfg" 2>/dev/null || grep -q 'WP_DEBUG.*, true' "$cfg"; then
+    sed -i "s/define( *'WP_DEBUG'.*/define( 'WP_DEBUG', false );/" "$cfg"
+    ok "WP_DEBUG OFF"
+  else
+    sed -i "s/define( *'WP_DEBUG'.*/define( 'WP_DEBUG', true );\ndefine( 'WP_DEBUG_LOG', true );\ndefine( 'WP_DEBUG_DISPLAY', false );/" "$cfg"
+    ok "WP_DEBUG ON (log: /var/www/$D/wp-content/debug.log)"
+  fi
+}
+
+wp_maintenance() {
+  local D="$1"; local f="/var/www/$D/.maintenance"
+  if [ -f "$f" ]; then rm -f "$f"; ok "maintenance OFF"; else echo '<?php $upgrading = time();' > "$f"; ok "maintenance ON"; fi
+}
+
+# ==============================================================
+#  COMMAND: server — menu manajemen server (restart/cache/domain/dll)
+# ==============================================================
+cmd_server() {
+  while true; do
+    echo ""
+    echo -e "${C_B}  ── SERVER: $(hostname) ──${C_0}"
+    echo "   1) Restart web stack (nginx + php-fpm + mariadb)"
+    echo "   2) Reboot server"
+    echo "   3) Purge semua cache (FastCGI + OPcache)"
+    echo "   4) Bersihkan log besar + truncate"
+    echo "   5) Domain: list / tambah / hapus"
+    echo "   6) SSL: renew semua / issue 1 domain"
+    echo "   7) Live log akses (tail -f)"
+    echo "   8) Cek error terakhir (nginx error log)"
+    echo "   9) Disk: pemakaian + file terbesar"
+    echo "  10) Update OS (apt upgrade)"
+    echo "  11) Security audit (semua site + firewall)"
+    echo "  12) Verifikasi kesehatan 17 poin"
+    echo "   0) kembali"
+    read -rp "  Pilih: " p
+    case $p in
+      1) systemctl reload nginx; systemctl restart php$PHPV-fpm 2>/dev/null || systemctl restart php-fpm
+         echo -n "  restart mariadb? (y/N): "; read y
+         [ "$y" = "y" ] && systemctl restart mariadb
+         ok "web stack restarted";;
+      2) echo -n "  REBOOT server sekarang? (ketik YES): "; read y
+         [ "$y" = "YES" ] && { ok "rebooting..."; sleep 2; reboot; } || warn "dibatalkan";;
+      3) rm -rf /etc/nginx/fcgi_cache/* 2>/dev/null
+         systemctl reload php$PHPV-fpm 2>/dev/null
+         systemctl reload nginx
+         ok "semua cache purged (FastCGI + OPcache reset)";;
+      4) du -sh /var/log/* 2>/dev/null | sort -rh | head -8
+         for f in /var/log/nginx/*.error.log /var/log/php-fpm/*.log; do
+           [ -f "$f" ] && [ $(stat -c%s "$f") -gt 52428800 ] && truncate -s 0 "$f" && ok "truncate: $f"
+         done
+         journalctl --vacuum-size=100M >/dev/null 2>&1
+         ok "log dibersihkan";;
+      5) server_domain_menu;;
+      6) echo "  a) renew semua (certbot renew)  b) issue 1 domain"
+         read -rp "  pilih: " sp
+         case $sp in
+           a) certbot renew --quiet && ok "SSL renewed";;
+           b) read -rp "  domain: " d; cmd_ssl "$d";;
+         esac;;
+      7) echo -e "  ${C_Y}(Ctrl+C untuk keluar)${C_0}"; tail -f /var/log/nginx/access.log 2>/dev/null | head -50;;
+      8) tail -30 /var/log/nginx/error.log 2>/dev/null || ok "error log kosong";;
+      9) df -h / | sed -n 2p
+         echo "  --- 10 file/folder terbesar di /var/www ---"
+         du -sh /var/www/* 2>/dev/null | sort -rh | head -10;;
+      10) apt-get update -qq && apt-get upgrade -y -qq && ok "OS updated";;
+      11) cmd_security;;
+      12) cmd_verify;;
+      0) break;;
+    esac
+    [ "$p" != "0" ] && read -rp "  Enter..."
+  done
+}
+
+server_domain_menu() {
+  echo "  a) list site  b) tambah site  c) hapus site  d) detail site"
+  read -rp "  pilih: " sp
+  case $sp in
+    a) cmd_list;;
+    b) read -rp "  domain (sub.domain.com): " d; [ -n "$d" ] && cmd_add "$d";;
+    c) read -rp "  domain: " d; [ -n "$d" ] && cmd_remove "$d";;
+    d) read -rp "  domain: " d; [ -n "$d" ] && { cmd_creds "$d"; grep "^$d|" "$REG_FILE"; };;
+  esac
+}
+
 #  COMMAND: banner — pasang tulisan JUMANJI di login SSH (MOTD)
 # ==============================================================
 cmd_banner() {
@@ -812,38 +1036,36 @@ cmd_menu() {
     echo -e "${C_B}  ╔══════════════════════════════════════════╗${C_0}"
     echo -e "${C_B}  ║   WPK — WordPress Kit (All-in-One)       ║${C_0}"
     echo -e "${C_B}  ╚══════════════════════════════════════════╝${C_0}"
-    echo "   1) Install base server (sekali saja)"
-    echo "   2) Tambah site WordPress"
-    echo "   3) Daftar site"
-    echo "   4) Status server"
-    echo "   5) Kredensial site"
-    echo "   6) Backup site"
-    echo "   7) Backup semua"
-    echo "   8) Update site (core+plugin+tema)"
-    echo "   9) Hapus site"
-    echo "  10) Security audit"
-    echo "  11) Optimasi / bersih-bersih"
-    echo "  12) Pasang banner JUMANJI (MOTD)"
-    echo "  13) PERBAIKI poin verifikasi yang gagal"
+    echo -e "  ${C_G}── WORDPRESS ──${C_0}"
+    echo "   1) Tambah site baru (wpk add)"
+    echo "   2) Daftar site"
+    echo "   3) Manage site (install lengkap, plugin, tema, user...)"
+    echo -e "  ${C_G}── SERVER ──${C_0}"
+    echo "   4) Manajemen server (restart, cache, domain, SSL, log...)"
+    echo "   5) Status server"
+    echo "   6) Security audit"
+    echo "   7) Verifikasi kesehatan (17 poin)"
+    echo "   8) Perbaiki poin gagal (fix)"
+    echo -e "  ${C_G}── LAINNYA ──${C_0}"
+    echo "   9) Install base server (sekali saja)"
+    echo "  10) Banner JUMANJI (MOTD)"
     echo "   0) Keluar"
     echo ""
     read -rp "  Pilih: " p
     case $p in
-      1) cmd_base; read -rp "Enter...";;
-      2) read -rp "Domain: " d; cmd_add "$d"; read -rp "Enter...";;
-      3) cmd_list; read -rp "Enter...";;
-      4) cmd_status; read -rp "Enter...";;
-      5) read -rp "Domain: " d; cmd_creds "$d"; read -rp "Enter...";;
-      6) read -rp "Domain: " d; cmd_backup "$d"; read -rp "Enter...";;
-      7) cmd_backup_all; read -rp "Enter...";;
-      8) read -rp "Domain: " d; cmd_update "$d"; read -rp "Enter...";;
-      9) read -rp "Domain: " d; cmd_remove "$d"; read -rp "Enter...";;
-      10) cmd_security; read -rp "Enter...";;
-      11) cmd_optimize; read -rp "Enter...";;
-      12) cmd_banner; read -rp "Enter...";;
-      13) cmd_fix; read -rp "Enter...";;
+      1) read -rp "  Domain: " d; [ -n "$d" ] && cmd_add "$d";;
+      2) cmd_list;;
+      3) cmd_site;;
+      4) cmd_server;;
+      5) cmd_status;;
+      6) cmd_security;;
+      7) cmd_verify;;
+      8) cmd_fix;;
+      9) cmd_base;;
+      10) cmd_banner;;
       0) exit 0;;
     esac
+    [ "$p" != "0" ] && read -rp "  Enter..."
   done
 }
 
@@ -870,9 +1092,11 @@ case "$1" in
   security)   cmd_security;;
   verify)     cmd_verify;;
   fix)        cmd_fix;;
+  site)       shift; cmd_site "$@";;
+  server)     cmd_server;;
   banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
-  *) echo "WPK v1.0 — perintah tidak dikenal: $1"
+  *) echo "WPK v2.0 — perintah tidak dikenal: $1"
      echo "Pakai: wpk | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
