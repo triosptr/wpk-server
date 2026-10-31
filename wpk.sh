@@ -467,39 +467,7 @@ cmd_ssl() {
     --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || { err "certbot gagal (cek DNS resolve + proxy CF OFF)"; return; }
 
   # patch vhost → regen HTTPS dari template (bersih, tak bisa merusak struktur)
-  python3 - "$D" <<'PYEOF'
-import sys, re
-d = sys.argv[1]
-tp = "/root/wpk.vhost.template"
-tmpl = open(tp).read()
-body = tmpl.replace("__DOMAIN__", d).replace("__SOCKET__", "/run/php/php8.3-fpm-wp.sock")
-# ambil blok server pertama (isi) dari template
-m = re.search(r"server\s*\{(.*)\}\s*$", body, re.S)
-inner = m.group(1).rstrip() if m else body
-vhost = f"""# WPK vhost HTTPS - {d}
-server {{
-    listen 443 ssl http2;
-    server_name {d};
-    root /var/www/{d};
-    index index.php;
-{inner}
-    ssl_certificate /etc/letsencrypt/live/{d}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{d}/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-    include /etc/nginx/snippets/security_headers.conf;
-}}
-
-# HTTP -> HTTPS
-server {{
-    listen 80;
-    server_name {d};
-    location ^~ /.well-known/acme-challenge/ {{ root /var/www/_letsencrypt; }}
-    location / {{ return 301 https://$host$request_uri; }}
-}}
-"""
-open(f"/etc/nginx/sites-available/{d}", "w").write(vhost)
-PYEOF
+  python3 /root/wpk_ssl_gen.py "$D"
   ln -sf "/etc/nginx/sites-available/$D" "/etc/nginx/sites-enabled/$D"
   if nginx -t >/dev/null 2>&1; then
     systemctl reload nginx
@@ -1114,37 +1082,7 @@ cmd_repair() {
 
   # SSL: kalau cert sudah ada, tulis vhost HTTPS via generator (sama seperti cmd_ssl)
   if [ -d "/etc/letsencrypt/live/$D" ]; then
-    python3 - "$D" <<'PYEOF'
-import sys, re
-d = sys.argv[1]
-tmpl = open("/root/wpk.vhost.template").read()
-body = tmpl.replace("__DOMAIN__", d).replace("__SOCKET__", "/run/php/php8.3-fpm-wp.sock")
-m = re.search(r"server\s*\{(.*)\}\s*$", body, re.S)
-inner = m.group(1).rstrip() if m else body
-vhost = f"""# WPK vhost HTTPS - {d}
-server {{
-    listen 443 ssl http2;
-    server_name {d};
-    root /var/www/{d};
-    index index.php;
-{inner}
-    ssl_certificate /etc/letsencrypt/live/{d}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{d}/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-    include /etc/nginx/snippets/security_headers.conf;
-}}
-
-# HTTP -> HTTPS
-server {{
-    listen 80;
-    server_name {d};
-    location ^~ /.well-known/acme-challenge/ {{ root /var/www/_letsencrypt; }}
-    location / {{ return 301 https://$host$request_uri; }}
-}}
-"""
-open(f"/etc/nginx/sites-available/{d}", "w").write(vhost)
-PYEOF
+    python3 /root/wpk_ssl_gen.py "$D"
   fi
 
   if nginx -t >/dev/null 2>&1; then

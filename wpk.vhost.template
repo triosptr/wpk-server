@@ -1,12 +1,5 @@
-# WPK vhost — __DOMAIN__
-server {
-    listen 80;
-    server_name __DOMAIN__;
-    root /var/www/__DOMAIN__;
-    index index.php;
-    include /etc/nginx/snippets/security_headers.conf;
     location ^~ /.well-known/acme-challenge/ { root /var/www/_letsencrypt; }
-    location ~* \\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff2?|ttf)$ {
+    location ~* \.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff2?|ttf)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";
         try_files $uri =404;
@@ -17,12 +10,12 @@ server {
         fastcgi_pass unix:__SOCKET__;
         fastcgi_read_timeout 120;
     }
-    location ~* /(wp-config\\.php|readme\\.html|license\\.txt|xmlrpc\\.php) { deny all; }
-    location ~ /\\. { deny all; }
+    location ~* /(wp-config\.php|readme\.html|license\.txt|xmlrpc\.php) { deny all; }
+    location ~ /\. { deny all; }
     set $skip_cache 0;
     if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_no_cache|wordpress_logged_in") { set $skip_cache 1; }
     location / { try_files $uri $uri/ /index.php?$args; }
-    location ~ \\.php$ {
+    location ~ \.php$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:__SOCKET__;
         fastcgi_cache WPGLOBAL;
@@ -30,4 +23,3 @@ server {
         fastcgi_no_cache     $skip_cache;
         fastcgi_read_timeout 120;
     }
-}
