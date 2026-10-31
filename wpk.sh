@@ -419,7 +419,8 @@ cmd_add() {
   echo -e "   7. Verifikasi site LIVE (HTTP 200)"
   echo ""
   echo -e "  ${C_Y}Sy DNS (Cloudflare):${C_0} A record -> $(curl -s -m 3 ifconfig.me 2>/dev/null || echo 'IP-server') , proxy awan ${C_Y}MATI${C_0} (grey cloud / DNS only)"
-  getent hosts "$D" >/dev/null &&     { RESOLVED_IP=$(getent hosts "$D" | awk '{print $1}' | head -1)
+  getent hosts "$D" >/dev/null &&     { RESOLVED_IP=$(getent ahostsv4 "$D" | awk '{print $1}' | head -1)
+      [ -z "$RESOLVED_IP" ] && RESOLVED_IP=$(getent hosts "$D" | awk '{print $1}' | head -1)
       SERVER_IP=$(curl -s -m 3 ifconfig.me 2>/dev/null)
       [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" != "$SERVER_IP" ] && warn "DNS $D mengarah ke $RESOLVED_IP, bukan IP server ini ($SERVER_IP) — periksa A record"; } ||     warn "DNS $D BELUM resolve — buat A record di Cloudflare (proxy MATI/awan abu), lalu 'wpk ssl $D' nanti"
 
