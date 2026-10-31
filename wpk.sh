@@ -88,7 +88,7 @@ cmd_base() {
   # ---------- 1. paket dasar ----------
   step 1 "Paket dasar (nginx, mariadb, php 8.3, wp-cli)"
   apt-get update -qq
-  apt-get install -y -qq nginx mariadb-server curl git unzip ufw fail2ban \
+  apt-get install -y -qq nginx mariadb-server curl git unzip ufw fail2ban certbot \
     software-properties-common gnupg2 lsb-release sqlite3 >/dev/null 2>&1
   if ! php -v 2>/dev/null | grep -q "8.3"; then
     add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
@@ -221,13 +221,8 @@ EOF
   step 5 "Nginx global + FastCGI cache + security headers"
   cat > /etc/nginx/conf.d/wpk.conf <<'EOF'
 server_tokens off;
-# --- performance (http ctx) ---
-sendfile on;
-tcp_nopush on;
-tcp_nodelay on;
+# --- performance (http ctx; sendfile/tcp_nodelay sudah di nginx.conf utama) ---
 aio threads;
-directio 8m;
-output_buffers 2 32k;
 fastcgi_cache_path /etc/nginx/fcgi_cache levels=1:2 keys_zone=WPGLOBAL:128m inactive=120m use_temp_path=off;
 fastcgi_cache_key "$scheme$request_method$host$request_uri";
 fastcgi_cache_use_stale error timeout invalid_header updating http_500 http_503;
@@ -257,6 +252,8 @@ add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 EOF
+  # hapus sisa konflik duplikat dari versi lama
+  sed -i '/^sendfile on;$/d; /^tcp_nopush on;$/d; /^tcp_nodelay on;$/d; /^directio 8m;$/d; /^output_buffers 2 32k;$/d' /etc/nginx/conf.d/wpk.conf 2>/dev/null
   # main ctx: worker tuning (conf.d tidak bisa menampung main ctx)
   NG=/etc/nginx/nginx.conf
   grep -q "worker_rlimit_nofile 65535" $NG || {
@@ -401,8 +398,8 @@ cmd_add() {
   # WP core
   mkdir -p "/var/www/$D"
   if [ ! -f "/var/www/$D/wp-config.php" ]; then
-    wp core download --path="/var/www/$D" --quiet
-    wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet
+    wp core download --path="/var/www/$D" --quiet --allow-root
+    wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet --allow-root
     if ! grep -q DISALLOW_FILE_EDIT "/var/www/$D/wp-config.php"; then
       echo "" >> "/var/www/$D/wp-config.php"
       cat "$WP_CONFIG_EXTRA" >> "/var/www/$D/wp-config.php"
@@ -595,7 +592,10 @@ cmd_creds() {
   echo "  Domain : $D"
   echo "  Admin  : $admin / $pass"
   echo "  DB     : $db ($dbuser)"
-  local dbpass; dbpass=$(grep -oP "DB_PASSWORD', '\K[^']+" "/var/www/$D/wp-config.php" 2>/dev/null)
+  local dbpass
+  if [ -f "/var/www/$D/wp-config.php" ]; then
+    dbpass=$(grep -oP "DB_PASSWORD'[^']*'\K[^']+" "/var/www/$D/wp-config.php" 2>/dev/null)
+  fi
   echo "  DBPass : $dbpass"
 }
 
@@ -1044,6 +1044,54 @@ cmd_update_self() {
   fi
 }
 
+# ==============================================================
+#  COMMAND: repair — pulihkan site yang setengah terpasang
+# ==============================================================
+cmd_repair() {
+  local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk repair <domain>"; exit 1; }
+  hdr "REPAIR — $D"
+  detect_phpver
+  [ -d "/var/www/$D" ] || { err "docroot tidak ada"; exit 1; }
+
+  # vhost: regen dari template (bawa konfig terbaru)
+  sed -e "s/__DOMAIN__/$D/g" -e "s|__SOCKET__|$(socket_path)|g" "$VHOST_TEMPLATE" > "/etc/nginx/sites-available/$D"
+  ln -sf "/etc/nginx/sites-available/$D" "/etc/nginx/sites-enabled/$D"
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx && ok "vhost OK" || err "nginx test gagal: $(nginx -t 2>&1 | tail -1)"
+
+  # wp-config: buat ulang kalau hilang (pakai kredensial registry / minta DB)
+  local DBNAME="wp_${D//./_}" DBUSER="u_${D//./_}"
+  local DBPASS; DBPASS=$(reg_get "$D" 5)
+  if [ ! -f "/var/www/$D/wp-config.php" ]; then
+    [ -z "$DBPASS" ] && { err "domain tak terdaftar & wp-config hilang — jalankan wpk add"; exit 1; }
+    mysql -e "CREATE DATABASE IF NOT EXISTS \`$DBNAME\`; CREATE USER IF NOT EXISTS '$DBUSER'@'localhost' IDENTIFIED BY '$DBPASS'; GRANT ALL ON \`$DBNAME\`.* TO '$DBUSER'@'localhost'; FLUSH PRIVILEGES;"
+    wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet --allow-root
+    grep -q DISALLOW_FILE_EDIT "/var/www/$D/wp-config.php" || cat "$WP_CONFIG_EXTRA" >> "/var/www/$D/wp-config.php"
+    chown -R www-data:www-data "/var/www/$D"
+    ok "wp-config dibuat ulang"
+  else ok "wp-config ada"; fi
+
+  # SSL kalau belum ada
+  [ -d "/etc/letsencrypt/live/$D" ] || cmd_ssl "$D"
+
+  # core install kalau belum
+  local URL="https://$D"; [ -d "/etc/letsencrypt/live/$D" ] || URL="http://$D"
+  if ! sudo -u www-data wp core is-installed --path="/var/www/$D" 2>/dev/null; then
+    local ADMINPASS; ADMINPASS=$(openssl rand -base64 16 | tr -d '/+=')
+    local ADMINUSER="wp_$(tr -dc 'a-z' </dev/urandom | head -c 6)"
+    sudo -u www-data wp core install --path="/var/www/$D" --url="$URL" --title="$D" \
+      --admin_user="$ADMINUSER" --admin_password="$ADMINPASS" --admin_email="info@${D#*.}" --skip-email --quiet
+    sudo -u www-data wp option update default_comment_status closed --path="/var/www/$D"
+    sudo -u www-data wp option update default_ping_status closed --path="/var/www/$D"
+    sudo -u www-data wp rewrite structure '/%postname%/' --hard --path="/var/www/$D"
+    reg_add "$D" "$DBNAME" "$DBUSER" "$ADMINUSER" "$ADMINPASS"
+    ok "WordPress terinstall"
+    echo -e "  ${C_G}Admin: $ADMINUSER / $ADMINPASS${C_0}"
+  else
+    ok "WP sudah terinstall — verifikasi:"
+  fi
+  curl -sk -o /dev/null -m 5 "$URL" && ok "site UP: $URL" || warn "site belum merespon (DNS/propagasi)"
+}
+
 #  MENU INTERAKTIF
 # ==============================================================
 cmd_menu() {
@@ -1067,6 +1115,7 @@ cmd_menu() {
     echo "   9) Install base server (sekali saja)"
     echo "  10) Banner JUMANJI (MOTD)"
     echo "  11) Update WPK ke versi terbaru"
+    echo "  12) REPAIR site bermasalah"
     echo "   0) Keluar"
     echo ""
     read -rp "  Pilih: " p
@@ -1082,6 +1131,7 @@ cmd_menu() {
       9) cmd_base;;
       10) cmd_banner;;
       11) cmd_update_self;;
+      12) read -rp "  Domain: " d; [ -n "$d" ] && cmd_repair "$d";;
       0) exit 0;;
     esac
     [ "$p" != "0" ] && read -rp "  Enter..."
@@ -1114,9 +1164,10 @@ case "$1" in
   site)       shift; cmd_site "$@";;
   server)     cmd_server;;
   self-update) cmd_update_self;;
+  repair)     shift; cmd_repair "$@";;
   banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
-  *) echo "WPK v2.1 — perintah tidak dikenal: $1"
+  *) echo "WPK v2.2 — perintah tidak dikenal: $1"
      echo "Pakai: wpk | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
