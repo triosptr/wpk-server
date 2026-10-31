@@ -710,6 +710,7 @@ cmd_banner() {
 # ==============================================================
 cmd_fix() {
   hdr "PERBAIKAN OTOMATIS — POIN GAGAL"
+  detect_phpver
   local fixed=0
 
   # --- 5: WP-CLI ---
@@ -717,38 +718,63 @@ cmd_fix() {
     warn "WP-CLI rusak/belum ada — download ulang..."
     curl -sS https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o /usr/local/bin/wp
     chmod +x /usr/local/bin/wp
-    wp --version >/dev/null 2>&1 && { ok "WP-CLI diperbaiki ($(wp --version 2>/dev/null | grep -oE 'WP-CLI [0-9.]+'))"; fixed=$((fixed+1)); } || err "WP-CLI masih gagal (cek koneksi ke github.com)"
-  else ok "WP-CLI sebenarnya OK (false alarm versi lama)"; fi
+    wp --version >/dev/null 2>&1 && { ok "WP-CLI diperbaiki"; fixed=$((fixed+1)); } || err "WP-CLI masih gagal (cek koneksi github.com dari server: curl -sI https://raw.githubusercontent.com)"
+  else ok "WP-CLI OK"; fi
 
-  # --- 11: port sensitif ---
-  local opened; opened=$(ss -tuln | awk '{print $5}' | grep -oE ':(3306|25|6379)$' | sort -u | tr '\n' ' ')
-  if [ -n "$opened" ]; then
-    warn "port terbuka: $opened — dianalisis & ditutup..."
-    # 3306: MariaDB bind luar -> paksa localhost
-    if echo "$opened" | grep -q 3306; then
-      grep -q "^bind-address" /etc/mysql/mariadb.conf.d/99-wpk.cnf && sed -i 's/^bind-address.*/bind-address            = 127.0.0.1/' /etc/mysql/mariadb.conf.d/99-wpk.cnf
-      # conf lain bisa override — pastikan tidak ada yang bind 0.0.0.0
-      grep -rl "bind-address.*0.0.0.0" /etc/mysql/ 2>/dev/null | xargs -r sed -i 's/bind-address.*0.0.0.0/bind-address = 127.0.0.1/'
-      systemctl restart mariadb
+  # --- 11: port sensitif — hanya yang bind ke luar (0.0.0.0 / [::] / *) yang bahaya ---
+  local badport=0
+  for pt in 3306 25 6379; do
+    # listener yang bind selain loopback
+    local ln; ln=$(ss -tuln | awk -v p=":${pt}" '$5 ~ p {print $5}' | grep -vE '^(127\.0\.0\.1|\[::1\]|::1):' | head -1)
+    if [ -z "$ln" ]; then
+      continue   # tidak listen sama sekali, atau hanya loopback = aman
     fi
-    # 25: postfix/exim idle -> matikan & stop
-    if echo "$opened" | grep -q ":25"; then
-      systemctl stop postfix exim4 2>/dev/null; systemctl disable postfix exim4 2>/dev/null
-    fi
-    # 6379: redis -> bind localhost saja
-    if echo "$opened" | grep -q 6379; then
-      [ -f /etc/redis/redis.conf ] && sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf && systemctl restart redis-server 2>/dev/null
-    fi
-    # lapis terakhir: blok via ufw secara eksplisit
-    for pt in 3306 25 6379; do ufw deny "$pt"/tcp >/dev/null 2>&1; done
-    sleep 1
-    [ "$(ss -tuln | awk '{print $5}' | grep -cE ':(3306|25|6379)$')" = "0" ] && { ok "semua port sensitif tertutup"; fixed=$((fixed+1)); } || err "masih ada port terbuka — laporkan output 'ss -tuln'"
-  else ok "port sensitif sebenarnya OK (false alarm: listen ::1/[::] dihitung luar)"; fi
+    warn "port $pt listen di $ln (luar) — ditangani:"
+    badport=1
+    case $pt in
+      3306)
+        grep -rlE "bind-address.*0\.0\.0\.0" /etc/mysql/ 2>/dev/null | xargs -r sed -i 's/bind-address.*/bind-address = 127.0.0.1/'
+        grep -q "^bind-address" /etc/mysql/mariadb.conf.d/99-wpk.cnf 2>/dev/null || echo "bind-address = 127.0.0.1" >> /etc/mysql/mariadb.conf.d/99-wpk.cnf
+        systemctl restart mariadb 2>/dev/null
+        ;;
+      25)
+        for svc in postfix exim4 sendmail; do
+          systemctl stop $svc 2>/dev/null; systemctl disable $svc 2>/dev/null
+        done
+        # kalau masih ada yang listen 25, temukan PID-nya
+        local pid; pid=$(ss -tlnp 2>/dev/null | awk '/:25 /{print $NF}' | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+        [ -n "$pid" ] && { ps -p $pid -o comm= ; kill $pid 2>/dev/null; }
+        ;;
+      6379)
+        [ -f /etc/redis/redis.conf ] && sed -i 's/^bind .*/bind 127.0.0.1/' /etc/redis/redis.conf
+        systemctl restart redis-server 2>/dev/null || { local pid2; pid2=$(ss -tlnp 2>/dev/null | awk '/:6379 /{print $NF}' | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2); [ -n "$pid2" ] && kill $pid2 2>/dev/null; }
+        ;;
+    esac
+  done
+  [ $badport = 0 ] && ok "tidak ada port sensitif yang bind ke luar (aman)"
+
+  # recheck poin 11
+  local still=0
+  for pt in 3306 25 6379; do
+    ss -tuln | awk -v p=":${pt}" '$5 ~ p {print $5}' | grep -vqE '^(127\.0\.0\.1|\[::1\]|::1):' && still=$((still+1))
+  done
+  if [ $still = 0 ]; then
+    ok "port sensitif kini hanya loopback / mati"; [ $badport = 1 ] && fixed=$((fixed+1))
+  else
+    err "masih ada $still port bind luar — jalankan 'ss -tuln | grep -E "3306|25|6379"' dan laporkan"
+  fi
 
   # --- 15: JIT ---
   local jit_val; jit_val=$(php -r 'echo ini_get("opcache.jit_buffer_size");' 2>/dev/null)
   if [ -z "$jit_val" ] || [ "$jit_val" = "0" ]; then
-    warn "JIT belum aktif — perbaiki konfigurasi opcache..."
+    warn "JIT belum aktif — tulis ulang konfigurasi opcache..."
+    if [ ! -d "/etc/php/$PHPV/fpm/conf.d" ]; then
+      # PHP tidak terdeteksi — cari versi yang benar-benar ada
+      for v in 8.3 8.2 8.1 8.0; do
+        [ -d "/etc/php/$v/fpm/conf.d" ] && PHPV=$v && break
+      done
+    fi
+    if [ -d "/etc/php/$PHPV/fpm/conf.d" ]; then
     cat > "/etc/php/$PHPV/fpm/conf.d/90-opcache.ini" <<'EOF'
 opcache.enable=1
 opcache.enable_cli=1
@@ -761,21 +787,20 @@ opcache.save_comments=1
 opcache.jit=tracing
 opcache.jit_buffer_size=64M
 EOF
-    # hapus file_cache (bisa konflik di beberapa setup) — tetap ada jit murni memory
-    mkdir -p /var/cache/php-opcache && chown www-data:www-data /var/cache/php-opcache
-    php-fpm$PHPV -t >/dev/null 2>&1 && systemctl restart php$PHPV-fpm
+      php-fpm$PHPV -t >/dev/null 2>&1 && systemctl restart php$PHPV-fpm
+    else
+      err "direktori PHP-FPM tidak ditemukan — PHP belum terpasang? jalankan 'wpk base' dulu"
+    fi
+    jit_val=$(php -r 'echo ini_get("opcache.jit_buffer_size");' 2>/dev/null)
   fi
-  # cek ulang: angka byte ATAU "64M" keduanya dianggap aktif
-  jit_val=$(php -r 'echo ini_get("opcache.jit_buffer_size");' 2>/dev/null)
   if [ -n "$jit_val" ] && [ "$jit_val" != "0" ]; then
-    ok "PHP JIT aktif (jit_buffer_size=$jit_val)"; fixed=$((fixed+1))
-  else err "JIT masih mati — PHP build mungkin tanpa opcache JIT (cek: php -v | head -1)"; fi
+    ok "PHP JIT aktif (buffer=$jit_val)"; fixed=$((fixed+1))
+  else
+    err "JIT mati — kemungkinan opcache module tidak load. Cek: php -m | grep -i opcache"
+  fi
 
   echo ""
-  if [ $fixed -gt 0 ]; then
-    ok "$fixed poin diperbaiki — jalankan verifikasi ulang:"
-  fi
-  echo -e "  ${C_B}wpk verify${C_0}"
+  echo -e "  Diperbaiki: ${C_G}$fixed poin${C_0} — cek ulang: ${C_B}wpk verify${C_0}"
 }
 
 #  MENU INTERAKTIF
