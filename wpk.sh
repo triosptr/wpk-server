@@ -861,6 +861,33 @@ wp_full_install() {
   # auto-update plugin+tema
   $wp plugin auto-updates enable --all --quiet 2>/dev/null
   $wp theme auto-updates enable --all --quiet 2>/dev/null
+
+  # ---- ONBOARDING PAGE: front page pembuka rapi (bukan blank) ----
+  $wp option update timezone_string 'Asia/Jakarta' --quiet 2>/dev/null
+  local SUB="${D%%.*}"
+  local MAIN="${D#*.}"
+  $wp option update blogname "${SUB^}" --quiet 2>/dev/null
+  $wp option update blogdescription "Informasi, tips & referensi terbaru" --quiet 2>/dev/null
+  # halaman Home onboarding
+  $wp post create --post_type=page --post_status=publish --post_name=home \
+    --post_title="Selamat Datang di ${SUB^}" \
+    --post_content="<h2>Website ini sedang dalam persiapan</h2><p>Konten berkualitas sedang kami siapkan untuk Anda. Nantikan artikel-artikel terbaru seputar topik menarik yang akan segera hadir di sini.</p><p>— Tim ${SUB^}</p>" \
+    --quiet 2>/dev/null && ok "halaman onboarding dibuat"
+  # halaman Blog (daftar artikel)
+  $wp post create --post_type=page --post_status=publish --post_name=blog \
+    --post_title="Blog" --post_content="" --quiet 2>/dev/null
+  local HOME_ID BLOG_ID
+  HOME_ID=$($wp post list --post_type=page --name=home --field=ID 2>/dev/null)
+  BLOG_ID=$($wp post list --post_type=page --name=blog --field=ID 2>/dev/null)
+  [ -n "$HOME_ID" ] && $wp option update show_on_front page --quiet 2>/dev/null \
+    && $wp option update page_on_front "$HOME_ID" --quiet 2>/dev/null \
+    && ok "front page = onboarding"
+  [ -n "$BLOG_ID" ] && $wp option update page_for_posts "$BLOG_ID" --quiet 2>/dev/null
+  # menu primary: Home + Blog
+  $wp menu create "Primary" --quiet 2>/dev/null
+  $wp menu item add-post Primary "$HOME_ID" --quiet 2>/dev/null
+  [ -n "$BLOG_ID" ] && $wp menu item add-post Primary "$BLOG_ID" --quiet 2>/dev/null
+  $wp menu location assign Primary primary --quiet 2>/dev/null && ok "menu primary di-set"
   # favicon placeholder di-set saat add logo; site icon via media nanti
   wp_purge "$D"
   ok "INSTALL LENGKAP — site siap isi konten"
