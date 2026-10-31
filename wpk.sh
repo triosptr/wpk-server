@@ -226,6 +226,7 @@ aio threads;
 fastcgi_cache_path /etc/nginx/fcgi_cache levels=1:2 keys_zone=WPGLOBAL:128m inactive=120m use_temp_path=off;
 fastcgi_cache_key "$scheme$request_method$host$request_uri";
 fastcgi_cache_use_stale error timeout invalid_header updating http_500 http_503;
+add_header X-FastCGI-Cache $upstream_cache_status always;
 fastcgi_cache_valid 200 301 302 120m;
 client_max_body_size 32m;
 client_body_timeout 12s;
@@ -416,19 +417,35 @@ cmd_add() {
   # SSL
   cmd_ssl "$D"
 
-  # WP install
+  # WP install — lengkap otomatis (tanpa wizard web)
   local URL="https://$D"; [ -d "/etc/letsencrypt/live/$D" ] || URL="http://$D"
   if ! sudo -u www-data wp core is-installed --path="/var/www/$D" 2>/dev/null; then
-    sudo -u www-data wp core install --path="/var/www/$D" --url="$URL" \
+    if sudo -u www-data wp core install --path="/var/www/$D" --url="$URL" \
       --title="$D" --admin_user="$ADMINUSER" --admin_password="$ADMINPASS" \
-      --admin_email="info@${D#*.}" --skip-email --quiet
-    sudo -u www-data wp option update default_comment_status closed --path="/var/www/$D"
-    sudo -u www-data wp option update default_ping_status closed --path="/var/www/$D"
-    sudo -u www-data wp rewrite structure '/%postname%/' --hard --path="/var/www/$D"
-    sudo -u www-data wp rewrite flush --hard --path="/var/www/$D"
-    ok "WordPress terinstall"
+      --admin_email="info@${D#*.}" --skip-email --quiet 2>/dev/null; then
+      ok "WordPress terinstall (tanpa wizard)"
+    else
+      err "core install gagal — lihat pesan di atas"; return 1
+    fi
   else
     ok "WP sudah terinstall (skip)"
+  fi
+
+  # pastikan tidak jatuh ke wizard setup
+  sudo -u www-data wp option update blog_public 1 --path="/var/www/$D" --quiet 2>/dev/null
+  sudo -u www-data wp option update timezone_string 'Asia/Jakarta' --path="/var/www/$D" --quiet 2>/dev/null
+  sudo -u www-data wp option update start_of_week '1' --path="/var/www/$D" --quiet 2>/dev/null
+  sudo -u www-data wp option update default_comment_status closed --path="/var/www/$D" --quiet
+  sudo -u www-data wp option update default_ping_status closed --path="/var/www/$D" --quiet
+  sudo -u www-data wp rewrite structure '/%postname%/' --hard --path="/var/www/$D" --quiet
+  sudo -u www-data wp rewrite flush --hard --path="/var/www/$D" --quiet
+
+  # verifikasi live
+  local http_code; http_code=$(curl -sk -o /dev/null -w "%{http_code}" -m 10 "$URL")
+  if [ "$http_code" = "200" ]; then
+    ok "site LIVE: $URL (HTTP $http_code)"
+  else
+    warn "site belum 200 ($http_code) — cek: wpk repair $D"
   fi
 
   # cron wp-cron
@@ -437,6 +454,10 @@ cmd_add() {
   fi
 
   reg_add "$D" "$DBNAME" "$DBUSER" "$ADMINUSER" "$ADMINPASS"
+
+  # full install otomatis: plugin standar + Kadence + security (pola situs Trio)
+  wp_full_install "$D"
+
   echo ""
   echo -e "${C_G}===== SITE $D SIAP =====${C_0}"
   echo "  URL    : $URL"
@@ -725,7 +746,8 @@ cmd_site() {
 wp_full_install() {
   local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
   hdr "INSTALL WORDPRESS LENGKAP — $D"
-  $wp core is-installed --quiet 2>/dev/null || { err "WP core belum terinstall — wpk add $D dulu"; return; }
+  detect_phpver
+  $wp core is-installed --quiet 2>/dev/null || { err "WP core belum terinstall — jalankan core install dulu"; return; }
 
   echo -e "  Menginstall paket standar..."
   # plugin standar AdSense-ready (pola situs Trio)
