@@ -411,6 +411,7 @@ cmd_add() {
       echo "" >> "/var/www/$D/wp-config.php"
       cat "$WP_CONFIG_EXTRA" >> "/var/www/$D/wp-config.php"
     fi
+    sed -i "/add_filter(.*xmlrpc_enabled.*/d" "/var/www/$D/wp-config.php"
     chown -R www-data:www-data "/var/www/$D"
     ok "WordPress core terdownload"
   else ok "WP sudah ada di docroot"; fi
@@ -1062,12 +1063,14 @@ EOF
 #  COMMAND: update-self — tarik versi terbaru dari GitHub repo
 # ==============================================================
 cmd_update_self() {
-  local TMP="/tmp/wpk.sh.new" TMPV="/tmp/wpk.vhost.new"
+  local TMP="/tmp/wpk.sh.new" TMPV="/tmp/wpk.vhost.new" TMPC="/tmp/wpk.cfg.new"
   curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.sh -o "$TMP" || { err "download gagal (cek internet server)"; return; }
   curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.vhost.template -o "$TMPV" 2>/dev/null
+  curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk-config-extra.php -o "$TMPC" 2>/dev/null
   bash -n "$TMP" || { err "file baru invalid — batal"; return; }
   mv "$TMP" /root/wpk.sh && chmod +x /root/wpk.sh
   [ -s "$TMPV" ] && mv "$TMPV" "$VHOST_TEMPLATE"
+  [ -s "$TMPC" ] && mv "$TMPC" "$WP_CONFIG_EXTRA"
   ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
   ok "WPK updated → jalankan ulang: wpk"
 }
@@ -1099,6 +1102,8 @@ cmd_repair() {
     fi
     wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet --allow-root --force
     grep -q DISALLOW_FILE_EDIT "/var/www/$D/wp-config.php" || cat "$WP_CONFIG_EXTRA" >> "/var/www/$D/wp-config.php"
+    # sanitizer: buang racun add_filter dari wp-config (bukan fungsi WP di sana)
+    sed -i "/add_filter(.*xmlrpc_enabled.*/d" "/var/www/$D/wp-config.php"
     chown www-data:www-data "/var/www/$D/wp-config.php"
     chmod 600 "/var/www/$D/wp-config.php"
     ok "wp-config dibuat ulang bersih (creds: $DBNAME/$DBUSER)"
