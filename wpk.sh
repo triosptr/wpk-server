@@ -751,6 +751,12 @@ cmd_menu() {
 #  ROUTER
 # ==============================================================
 case "$1" in
+  -boot)      # one-liner mode: pasang diri + banner + base
+    cp "$0" /root/wpk.sh 2>/dev/null; chmod +x /root/wpk.sh
+    ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
+    bash /root/wpk.sh banner >/dev/null 2>&1
+    echo ">>> WPK terpasang. Mulai instalasi server... <<<"
+    cmd_base;;
   base)       cmd_base;;
   add)        shift; cmd_add "$@";;
   ssl)        shift; cmd_ssl "$@";;
