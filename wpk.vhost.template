@@ -1,3 +1,10 @@
+# WPK vhost — __DOMAIN__
+server {
+    listen 80;
+    server_name __DOMAIN__;
+    root /var/www/__DOMAIN__;
+    index index.php;
+    include /etc/nginx/snippets/security_headers.conf;
     location ^~ /.well-known/acme-challenge/ { root /var/www/_letsencrypt; }
     location ~* \.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff2?|ttf)$ {
         expires 30d;
@@ -23,3 +30,4 @@
         fastcgi_no_cache     $skip_cache;
         fastcgi_read_timeout 120;
     }
+}

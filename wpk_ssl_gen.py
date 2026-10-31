@@ -1,7 +1,8 @@
 import re, sys
 d = sys.argv[1]
 import os
-tp = "/root/wpk.vhost.template"
+tp = "/root/wpk.vhost.inner"
+if not os.path.exists(tp): tp = "/root/wp-server-base/wpk.vhost.inner"
 if not os.path.exists(tp): tp = "/root/wp-server-base/wpk.vhost.template"
 tmpl = open(tp).read()
 body = tmpl.replace("__DOMAIN__", d).replace("__SOCKET__", "/run/php/php8.3-fpm-wp.sock")
