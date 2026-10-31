@@ -512,8 +512,8 @@ cmd_verify() {
   [ -S "$(socket_path)" ]; v 3 "PHP-FPM pool 'wp' socket aktif ($PHPV)" $?
   # 4 php version
   php -v 2>/dev/null | grep -q "$PHPV"; v 4 "PHP $PHPV terpasang" $?
-  # 5 wp-cli
-  wp --version >/dev/null 2>&1; v 5 "WP-CLI terpasang & jalan" $?
+  # 5 wp-cli (root butuh --allow-root)
+  wp --allow-root --version >/dev/null 2>&1; v 5 "WP-CLI terpasang & jalan" $?
   # 6 swap
   free -m | awk 'NR==3{exit !($2>0)}'; v 6 "Swap aktif ($(free -h | sed -n 3p | awk '{print $2}'))" $?
   # 7 bbr
@@ -524,16 +524,16 @@ cmd_verify() {
   ufw status | grep -q "Status: active"; v 9 "UFW firewall aktif" $?
   # 10 fail2ban
   fail2ban-client ping >/dev/null 2>&1; v 10 "fail2ban aktif (ping OK)" $?
-  # 11 port sensitif
-  [ "$(ss -tuln | awk '{print $5}' | grep -cE ':(3306|25|6379)$')" = "0" ]; v 11 "Port sensitif 3306/25/6379 tertutup dari luar" $?
+  # 11 port sensitif (loopback tidak dihitung — hanya bind luar yang bahaya)
+  [ "$(ss -tuln | awk '{print $5}' | grep -E ':(3306|25|6379)$' | grep -cvE '^(127\.|\[::1\]|::1)')" = "0" ]; v 11 "Port sensitif 3306/25/6379 tertutup dari luar" $?
   # 12 fcgi cache dir
   [ -d /etc/nginx/fcgi_cache ] && grep -q WPGLOBAL /etc/nginx/conf.d/wpk.conf; v 12 "FastCGI cache zone WPGLOBAL siap" $?
   # 13 templates
   [ -f "$VHOST_TEMPLATE" ] && [ -f "$WP_CONFIG_EXTRA" ]; v 13 "Template vhost + wp-config hardening ada" $?
   # 14 ssh config
   sshd -T 2>/dev/null | grep -q "maxauthtries 3"; v 14 "SSH hardening aktif (MaxAuthTries 3)" $?
-  # 15 jit
-  php -i 2>/dev/null | grep -q "opcache.jit_buffer_size => 64"; v 15 "PHP JIT aktif (64M)" $?
+  # 15 jit (baca dari konfig PHP-FPM SAPI, bukan CLI)
+  php-fpm$PHPV -i 2>/dev/null | grep -qE "opcache.jit_buffer_size => (64M|67108864)"; v 15 "PHP JIT aktif (64M)" $?
   # 16 kernel hardening
   [ "$(sysctl -n kernel.kptr_restrict 2>/dev/null)" = "2" ] && [ "$(sysctl -n kernel.dmesg_restrict 2>/dev/null)" = "1" ]; v 16 "Kernel hardening aktif (kptr/dmesg restrict)" $?
   # 17 cipher ssh
@@ -756,7 +756,7 @@ cmd_fix() {
   # recheck poin 11
   local still=0
   for pt in 3306 25 6379; do
-    ss -tuln | awk -v p=":${pt}" '$5 ~ p {print $5}' | grep -vqE '^(127\.0\.0\.1|\[::1\]|::1):' && still=$((still+1))
+    ss -tuln | awk -v p=":${pt}" '$5 ~ p {print $5}' | grep -vqE '^(127\.|\[::1\]|::1)' && still=$((still+1))
   done
   if [ $still = 0 ]; then
     ok "port sensitif kini hanya loopback / mati"; [ $badport = 1 ] && fixed=$((fixed+1))
@@ -793,8 +793,8 @@ EOF
     fi
     jit_val=$(php -r 'echo ini_get("opcache.jit_buffer_size");' 2>/dev/null)
   fi
-  if [ -n "$jit_val" ] && [ "$jit_val" != "0" ]; then
-    ok "PHP JIT aktif (buffer=$jit_val)"; fixed=$((fixed+1))
+  if php-fpm$PHPV -i 2>/dev/null | grep -qE "opcache.jit_buffer_size => (64M|67108864)"; then
+    ok "PHP JIT aktif (FPM SAPI)"; fixed=$((fixed+1))
   else
     err "JIT mati — kemungkinan opcache module tidak load. Cek: php -m | grep -i opcache"
   fi
