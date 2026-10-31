@@ -476,8 +476,8 @@ CFGEOF
 
   # WP install — lengkap otomatis (tanpa wizard web)
   local URL="https://$D"; [ -d "/etc/letsencrypt/live/$D" ] || URL="http://$D"
-  if ! sudo -u www-data wp core is-installed --path="/var/www/$D" 2>/dev/null; then
-    if sudo -u www-data wp core install --path="/var/www/$D" --url="$URL" \
+  if ! sudo -u www-data /usr/local/bin/wp core is-installed --path="/var/www/$D" 2>/dev/null; then
+    if sudo -u www-data /usr/local/bin/wp core install --path="/var/www/$D" --url="$URL" \
       --title="$D" --admin_user="$ADMINUSER" --admin_password="$ADMINPASS" \
       --admin_email="info@${D#*.}" --skip-email --quiet 2>/dev/null; then
       ok "WordPress terinstall (tanpa wizard)"
@@ -489,13 +489,13 @@ CFGEOF
   fi
 
   # pastikan tidak jatuh ke wizard setup
-  sudo -u www-data wp option update blog_public 1 --path="/var/www/$D" --quiet 2>/dev/null
-  sudo -u www-data wp option update timezone_string 'Asia/Jakarta' --path="/var/www/$D" --quiet 2>/dev/null
-  sudo -u www-data wp option update start_of_week '1' --path="/var/www/$D" --quiet 2>/dev/null
-  sudo -u www-data wp option update default_comment_status closed --path="/var/www/$D" --quiet
-  sudo -u www-data wp option update default_ping_status closed --path="/var/www/$D" --quiet
-  sudo -u www-data wp rewrite structure '/%postname%/' --hard --path="/var/www/$D" --quiet
-  sudo -u www-data wp rewrite flush --hard --path="/var/www/$D" --quiet
+  sudo -u www-data /usr/local/bin/wp option update blog_public 1 --path="/var/www/$D" --quiet 2>/dev/null
+  sudo -u www-data /usr/local/bin/wp option update timezone_string 'Asia/Jakarta' --path="/var/www/$D" --quiet 2>/dev/null
+  sudo -u www-data /usr/local/bin/wp option update start_of_week '1' --path="/var/www/$D" --quiet 2>/dev/null
+  sudo -u www-data /usr/local/bin/wp option update default_comment_status closed --path="/var/www/$D" --quiet
+  sudo -u www-data /usr/local/bin/wp option update default_ping_status closed --path="/var/www/$D" --quiet
+  sudo -u www-data /usr/local/bin/wp rewrite structure '/%postname%/' --hard --path="/var/www/$D" --quiet
+  sudo -u www-data /usr/local/bin/wp rewrite flush --hard --path="/var/www/$D" --quiet
 
   # verifikasi live
   local http_code; http_code=$(curl -sk -o /dev/null -w "%{http_code}" -m 10 "$URL")
@@ -692,7 +692,7 @@ cmd_backup_all() {
 cmd_update() {
   local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk update <domain>"; exit 1; }
   [ -d "/var/www/$D" ] || { err "/var/www/$D tidak ada"; exit 1; }
-  local wp="sudo -u www-data wp --path=/var/www/$D"
+  local wp="sudo -u www-data /usr/local/bin/wp --path=/var/www/$D"
   $wp core update --quiet && ok "core updated: $D"
   $wp plugin update --all --quiet && ok "plugins updated"
   $wp theme update --all --quiet && ok "themes updated"
@@ -805,7 +805,7 @@ cmd_site() {
 
 # ---------- helper WordPress per-domain ----------
 wp_full_install() {
-  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  local D="$1"; local wp="sudo -u www-data /usr/local/bin/wp --path=/var/www/$D"
   hdr "INSTALL WORDPRESS LENGKAP — $D"
   detect_phpver
   $wp core is-installed --quiet 2>/dev/null || { err "WP core belum terinstall — jalankan core install dulu"; return; }
@@ -841,7 +841,7 @@ wp_full_install() {
 }
 
 wp_plugin_menu() {
-  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  local D="$1"; local wp="sudo -u www-data /usr/local/bin/wp --path=/var/www/$D"
   echo "  a) list  b) install  c) aktif  d) deaktif  e) hapus"
   read -rp "  pilih: " sp; read -rp "  slug plugin (kosongkan utk list): " slug
   case $sp in
@@ -854,7 +854,7 @@ wp_plugin_menu() {
 }
 
 wp_theme_menu() {
-  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  local D="$1"; local wp="sudo -u www-data /usr/local/bin/wp --path=/var/www/$D"
   echo "  a) list  b) aktifkan  c) update semua"
   read -rp "  pilih: " sp; read -rp "  nama tema: " slug
   case $sp in
@@ -865,7 +865,7 @@ wp_theme_menu() {
 }
 
 wp_user_menu() {
-  local D="$1"; local wp="sudo -u www-data wp --path=/var/www/$D"
+  local D="$1"; local wp="sudo -u www-data /usr/local/bin/wp --path=/var/www/$D"
   echo "  a) list user  b) tambah admin  c) reset password user"
   read -rp "  pilih: " sp
   case $sp in
@@ -883,8 +883,8 @@ wp_user_menu() {
 wp_purge() {
   local D="$1"
   rm -rf /etc/nginx/fcgi_cache/* 2>/dev/null
-  sudo -u www-data wp --path="/var/www/$D" rewrite flush --hard --quiet 2>/dev/null
-  sudo -u www-data wp --path="/var/www/$D" cache flush --quiet 2>/dev/null
+  sudo -u www-data /usr/local/bin/wp --path="/var/www/$D" rewrite flush --hard --quiet 2>/dev/null
+  sudo -u www-data /usr/local/bin/wp --path="/var/www/$D" cache flush --quiet 2>/dev/null
   systemctl reload nginx
   ok "cache $D di-purge (FastCGI + WP object cache + rewrite)"
 }
@@ -1194,14 +1194,14 @@ cmd_repair() {
 
   # core install kalau belum
   local URL="https://$D"; [ -d "/etc/letsencrypt/live/$D" ] || URL="http://$D"
-  if ! sudo -u www-data wp core is-installed --path="/var/www/$D" 2>/dev/null; then
+  if ! sudo -u www-data /usr/local/bin/wp core is-installed --path="/var/www/$D" 2>/dev/null; then
     local ADMINPASS; ADMINPASS=$(openssl rand -base64 16 | tr -d '/+=')
     local ADMINUSER="wp_$(tr -dc 'a-z' </dev/urandom | head -c 6)"
-    sudo -u www-data wp core install --path="/var/www/$D" --url="$URL" --title="$D" \
+    sudo -u www-data /usr/local/bin/wp core install --path="/var/www/$D" --url="$URL" --title="$D" \
       --admin_user="$ADMINUSER" --admin_password="$ADMINPASS" --admin_email="info@${D#*.}" --skip-email --quiet
-    sudo -u www-data wp option update default_comment_status closed --path="/var/www/$D"
-    sudo -u www-data wp option update default_ping_status closed --path="/var/www/$D"
-    sudo -u www-data wp rewrite structure '/%postname%/' --hard --path="/var/www/$D"
+    sudo -u www-data /usr/local/bin/wp option update default_comment_status closed --path="/var/www/$D"
+    sudo -u www-data /usr/local/bin/wp option update default_ping_status closed --path="/var/www/$D"
+    sudo -u www-data /usr/local/bin/wp rewrite structure '/%postname%/' --hard --path="/var/www/$D"
     reg_add "$D" "$DBNAME" "$DBUSER" "$ADMINUSER" "$ADMINPASS"
     ok "WordPress terinstall"
     echo -e "  ${C_G}Admin: $ADMINUSER / $ADMINPASS${C_0}"
