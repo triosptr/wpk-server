@@ -1058,16 +1058,14 @@ EOF
 #  COMMAND: update-self — tarik versi terbaru dari GitHub repo
 # ==============================================================
 cmd_update_self() {
-  local TMP="/tmp/wpk.sh.new"
+  local TMP="/tmp/wpk.sh.new" TMPV="/tmp/wpk.vhost.new"
   curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.sh -o "$TMP" || { err "download gagal (cek internet server)"; return; }
+  curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.vhost.template -o "$TMPV" 2>/dev/null
   bash -n "$TMP" || { err "file baru invalid — batal"; return; }
-  if cmp -s "$TMP" /root/wpk.sh 2>/dev/null; then
-    ok "sudah versi terbaru"
-  else
-    mv "$TMP" /root/wpk.sh && chmod +x /root/wpk.sh
-    ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
-    ok "WPK updated → jalankan ulang: wpk"
-  fi
+  mv "$TMP" /root/wpk.sh && chmod +x /root/wpk.sh
+  [ -s "$TMPV" ] && mv "$TMPV" "$VHOST_TEMPLATE"
+  ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
+  ok "WPK updated → jalankan ulang: wpk"
 }
 
 # ==============================================================
@@ -1105,10 +1103,9 @@ cmd_repair() {
   fi
 
   # vhost: regen dari template — TAPI template di disk mungkin lama; regen template dulu dari wpk.sh
-  if grep -q "TEOF" /root/wpk.sh 2>/dev/null; then
-    # ekstrak template dari dalam wpk.sh (blok TEOF...TEOF)
-    sed -n "/cat > .*VHOST_TEMPLATE.*<<'TEOF'/,/^TEOF$/p" /root/wpk.sh | sed '1d;$d' > "$VHOST_TEMPLATE"
-  fi
+  [ -s "$VHOST_TEMPLATE" ] || { err "template tidak ada — wpk self-update dulu"; exit 1; }
+  # pastikan template punya ^~ acme (bila file lama, patch)
+  sed -i 's|^    location /\.well-known/acme-challenge/|    location ^~ /.well-known/acme-challenge/|' "$VHOST_TEMPLATE"
   sed -e "s/__DOMAIN__/$D/g" -e "s|__SOCKET__|$(socket_path)|g" "$VHOST_TEMPLATE" > "/etc/nginx/sites-available/$D"
   ln -sf "/etc/nginx/sites-available/$D" "/etc/nginx/sites-enabled/$D"
 
@@ -1228,6 +1225,7 @@ cmd_menu() {
 case "$1" in
   -boot)      # one-liner mode: pasang diri + banner + base
     cp "$0" /root/wpk.sh 2>/dev/null; chmod +x /root/wpk.sh
+    curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.vhost.template -o "$VHOST_TEMPLATE" 2>/dev/null
     ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
     bash /root/wpk.sh banner >/dev/null 2>&1
     echo ">>> WPK terpasang. Mulai instalasi server... <<<"
