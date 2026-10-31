@@ -277,7 +277,7 @@ server {
     root /var/www/__DOMAIN__;
     index index.php;
     include /etc/nginx/snippets/security_headers.conf;
-    location /.well-known/acme-challenge/ { root /var/www/_letsencrypt; }
+    location ^~ /.well-known/acme-challenge/ { root /var/www/_letsencrypt; }
     location ~* \\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff2?|ttf)$ {
         expires 30d;
         add_header Cache-Control "public, immutable";
@@ -453,6 +453,11 @@ cmd_ssl() {
   local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk ssl <domain>"; exit 1; }
   if [ -d "/etc/letsencrypt/live/$D" ]; then ok "SSL sudah ada: $D"; return; fi
   [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada"; exit 1; }
+  # pastikan vhost pakai ^~ untuk acme (override deny dotfiles regex)
+  if [ -f "/etc/nginx/sites-available/$D" ] && grep -q "^    location /\.well-known/acme-challenge/" "/etc/nginx/sites-available/$D"; then
+    sed -i 's|^    location /\.well-known/acme-challenge/|    location ^~ /.well-known/acme-challenge/|' "/etc/nginx/sites-available/$D"
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx
+  fi
   chmod -R 755 /var/www/_letsencrypt 2>/dev/null
   mkdir -p /var/www/_letsencrypt/.well-known/acme-challenge
   certbot certonly --webroot -w /var/www/_letsencrypt -d "$D" \
