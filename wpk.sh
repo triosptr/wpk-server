@@ -313,8 +313,8 @@ define('WP_AUTO_UPDATE_CORE', 'minor');
 define('FORCE_SSL_ADMIN', true);
 define('WP_MEMORY_LIMIT', '128M');
 define('WP_MAX_MEMORY_LIMIT', '192M');
-add_filter('xmlrpc_enabled', '__return_false');
 EOF
+  # catatan: xmlrpc diblokir via nginx deny — TIDAK pakai add_filter di wp-config (bukan fungsi WP yang valid di sana)
   ok "template vhost ($VHOST_TEMPLATE) + wp-config hardening siap"
 
   # ---------- 7. firewall + fail2ban ----------
