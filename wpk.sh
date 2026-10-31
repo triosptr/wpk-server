@@ -594,8 +594,8 @@ cmd_verify() {
   fail2ban-client ping >/dev/null 2>&1; v 10 "fail2ban aktif (ping OK)" $?
   # 11 port sensitif (loopback tidak dihitung — hanya bind luar yang bahaya)
   [ "$(ss -tuln | awk '{print $5}' | grep -E ':(3306|25|6379)$' | grep -cvE '^(127\.|\[::1\]|::1)')" = "0" ]; v 11 "Port sensitif 3306/25/6379 tertutup dari luar" $?
-  # 12 fcgi cache dir
-  [ -d /etc/nginx/fcgi_cache ] && grep -q WPGLOBAL /etc/nginx/conf.d/wpk.conf; v 12 "FastCGI cache zone WPGLOBAL siap" $?
+  # 12 fcgi cache dir (file mungkin belum ada bila base belum jalan)
+  [ -d /etc/nginx/fcgi_cache ] && { [ -f /etc/nginx/conf.d/wpk.conf ] && grep -q WPGLOBAL /etc/nginx/conf.d/wpk.conf; }; v 12 "FastCGI cache zone WPGLOBAL siap" $?
   # 13 templates
   [ -f "$VHOST_TEMPLATE" ] && [ -f "$WP_CONFIG_EXTRA" ]; v 13 "Template vhost + wp-config hardening ada" $?
   # 14 ssh config
