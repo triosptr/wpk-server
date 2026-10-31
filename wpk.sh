@@ -681,6 +681,7 @@ cmd_optimize() {
 # ==============================================================
 cmd_site() {
   local D="$1"
+  detect_phpver
   if [ -z "$D" ]; then
     hdr "PILIH SITE"
     [ -s "$REG_FILE" ] || { warn "belum ada site — wpk add <domain> dulu"; return; }
