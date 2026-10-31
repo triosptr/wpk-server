@@ -418,7 +418,10 @@ cmd_add() {
   echo -e "   6. Plugin standar + tema Kadence + security config"
   echo -e "   7. Verifikasi site LIVE (HTTP 200)"
   echo ""
-  getent hosts "$D" >/dev/null || warn "DNS $D belum resolve (SSL bisa gagal — jalankan 'wpk ssl $D' nanti)"
+  echo -e "  ${C_Y}Sy DNS (Cloudflare):${C_0} A record -> $(curl -s -m 3 ifconfig.me 2>/dev/null || echo 'IP-server') , proxy awan ${C_Y}MATI${C_0} (grey cloud / DNS only)"
+  getent hosts "$D" >/dev/null &&     { RESOLVED_IP=$(getent hosts "$D" | awk '{print $1}' | head -1)
+      SERVER_IP=$(curl -s -m 3 ifconfig.me 2>/dev/null)
+      [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" != "$SERVER_IP" ] && warn "DNS $D mengarah ke $RESOLVED_IP, bukan IP server ini ($SERVER_IP) — periksa A record"; } ||     warn "DNS $D BELUM resolve — buat A record di Cloudflare (proxy MATI/awan abu), lalu 'wpk ssl $D' nanti"
 
   local DBNAME="wp_${D//./_}" DBUSER="u_${D//./_}"
   local DBPASS ADMINPASS ADMINUSER
@@ -542,7 +545,12 @@ cmd_ssl() {
   chmod -R 755 /var/www/_letsencrypt 2>/dev/null
   mkdir -p /var/www/_letsencrypt/.well-known/acme-challenge
   certbot certonly --webroot -w /var/www/_letsencrypt -d "$D" \
-    --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || { err "certbot gagal (cek DNS resolve + proxy CF OFF)"; return; }
+    --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || {
+      err "certbot gagal. Cek:"
+      echo -e "   ${C_Y}1. A record $D -> IP server ini (Cloudflare DNS)"
+      echo -e "   2. Proxy awan MATI (grey cloud / DNS only) — bukan oranye"
+      echo -e "   3. Perbaiki lalu jalankan ulang: wpk ssl $D${C_0}"
+      return; }
 
   # patch vhost → regen HTTPS dari template (bersih, tak bisa merusak struktur)
   python3 /root/wpk_ssl_gen.py "$D"
