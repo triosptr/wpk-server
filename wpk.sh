@@ -293,7 +293,6 @@ server {
     if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_no_cache|wordpress_logged_in") { set $skip_cache 1; }
     location / { try_files $uri $uri/ /index.php?$args; }
     location ~ \\.php$ {
-        try_files $uri =404;
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:__SOCKET__;
         fastcgi_cache WPGLOBAL;
