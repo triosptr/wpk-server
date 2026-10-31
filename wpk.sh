@@ -414,9 +414,8 @@ cmd_add() {
   echo -e "   2. WordPress core download"
   echo -e "   3. vhost nginx + security"
   echo -e "   4. SSL Let's Encrypt"
-  echo -e "   5. Install WP (admin+pass otomatis, tanpa wizard)"
-  echo -e "   6. Plugin standar + tema Kadence + security config"
-  echo -e "   7. Verifikasi site LIVE (HTTP 200)"
+  echo -e "   5. WordPress kosong siap — setup admin via wizard browser"
+  echo -e "      (bahasa → judul site → username → password)"
   echo ""
   echo -e "  ${C_Y}Sy DNS (Cloudflare):${C_0} A record -> $(curl -s -m 3 ifconfig.me 2>/dev/null || echo 'IP-server') , proxy awan ${C_Y}MATI${C_0} (grey cloud / DNS only)"
   getent hosts "$D" >/dev/null &&     { RESOLVED_IP=$(getent ahostsv4 "$D" | awk '{print $1}' | head -1)
@@ -425,10 +424,9 @@ cmd_add() {
       [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" != "$SERVER_IP" ] && warn "DNS $D mengarah ke $RESOLVED_IP, bukan IP server ini ($SERVER_IP) — periksa A record"; } ||     warn "DNS $D BELUM resolve — buat A record di Cloudflare (proxy MATI/awan abu), lalu 'wpk ssl $D' nanti"
 
   local DBNAME="wp_${D//./_}" DBUSER="u_${D//./_}"
-  local DBPASS ADMINPASS ADMINUSER
+  local DBPASS
   DBPASS=$(openssl rand -base64 18 | tr -d '/+=')
-  ADMINPASS=$(openssl rand -base64 16 | tr -d '/+=')
-  ADMINUSER="wp_$(tr -dc 'a-z' </dev/urandom | head -c 6)"
+  # admin user/password: di-setup Bapak via wizard WordPress di browser (bukan CLI)
 
   # DB
   if ! mysql -e "USE \`$DBNAME\`" 2>/dev/null; then
@@ -480,35 +478,26 @@ CFGEOF
     warn "SSL dilewati dulu — site jalan via HTTP. Setelah DNS beres: wpk ssl $D"
   fi
 
-  # WP install — lengkap otomatis (tanpa wizard web)
+  # WordPress KOSONG — admin/password/judul di-setup via WIZARD WordPress di browser
+  # (tahap install: bahasa → judul site → username admin → password)
   local URL="https://$D"; [ -d "/etc/letsencrypt/live/$D" ] || URL="http://$D"
-  if ! sudo -u www-data /usr/local/bin/wp core is-installed --path="/var/www/$D" 2>/dev/null; then
-    if sudo -u www-data /usr/local/bin/wp core install --path="/var/www/$D" --url="$URL" \
-      --title="$D" --admin_user="$ADMINUSER" --admin_password="$ADMINPASS" \
-      --admin_email="info@${D#*.}" --skip-email --quiet 2>/dev/null; then
-      ok "WordPress terinstall (tanpa wizard)"
-    else
-      err "core install gagal — lihat pesan di atas"; return 1
-    fi
-  else
+  if sudo -u www-data /usr/local/bin/wp core is-installed --path="/var/www/$D" 2>/dev/null; then
     ok "WP sudah terinstall (skip)"
   fi
 
-  # pastikan tidak jatuh ke wizard setup
-  sudo -u www-data /usr/local/bin/wp option update blog_public 1 --path="/var/www/$D" --quiet 2>/dev/null
-  sudo -u www-data /usr/local/bin/wp option update timezone_string 'Asia/Jakarta' --path="/var/www/$D" --quiet 2>/dev/null
-  sudo -u www-data /usr/local/bin/wp option update start_of_week '1' --path="/var/www/$D" --quiet 2>/dev/null
-  sudo -u www-data /usr/local/bin/wp option update default_comment_status closed --path="/var/www/$D" --quiet
-  sudo -u www-data /usr/local/bin/wp option update default_ping_status closed --path="/var/www/$D" --quiet
-  sudo -u www-data /usr/local/bin/wp rewrite structure '/%postname%/' --hard --path="/var/www/$D" --quiet
-  sudo -u www-data /usr/local/bin/wp rewrite flush --hard --path="/var/www/$D" --quiet
-
-  # verifikasi live
-  local http_code; http_code=$(curl -sk -o /dev/null -w "%{http_code}" -m 10 "$URL")
-  if [ "$http_code" = "200" ]; then
-    ok "site LIVE: $URL (HTTP $http_code)"
+  # verifikasi wizard tampil
+  local http_code; http_code=$(curl -sk -o /dev/null -w "%{http_code}" -m 10 "$URL/wp-admin/setup-config.php" 2>/dev/null)
+  http_code=${http_code:-000}
+  if [ "$http_code" = "200" ] || [ "$http_code" = "302" ]; then
+    ok "wizard WordPress siap: $URL"
   else
-    warn "site belum 200 ($http_code) — cek: wpk repair $D"
+    # coba root URL — kalau DB sudah connect, wizard redirect ke install.php
+    http_code=$(curl -sk -o /dev/null -w "%{http_code}" -m 10 "$URL" 2>/dev/null)
+    if [ "$http_code" = "200" ] || [ "$http_code" = "302" ]; then
+      ok "site siap: $URL (buka di browser untuk setup wizard)"
+    else
+      warn "site belum merespon ($http_code) — cek: wpk repair $D"
+    fi
   fi
 
   # cron wp-cron
@@ -516,18 +505,17 @@ CFGEOF
     echo "*/15 * * * * root curl -sk https://$D/wp-cron.php?doing_wp_cron >/dev/null 2>&1" >> /etc/crontab
   fi
 
-  reg_add "$D" "$DBNAME" "$DBUSER" "$ADMINUSER" "$ADMINPASS"
-
-  # full install otomatis: plugin standar + Kadence + security (pola situs Trio)
-  wp_full_install "$D"
+  reg_add "$D" "$DBNAME" "$DBUSER" "wizard-setup" "-"
 
   echo ""
-  echo -e "${C_G}===== SITE $D SIAP =====${C_0}"
-  echo "  URL    : $URL"
-  echo "  Admin  : $URL/wp-login.php"
-  echo "  User   : $ADMINUSER"
-  echo "  Pass   : $ADMINPASS"
-  echo "  (tersimpan di $REG_FILE — 'wpk creds $D' untuk lihat lagi)"
+  echo -e "${C_G}===== SITE $D SIAP — LANGKAH TERAKHIR VIA BROWSER =====${C_0}"
+  echo -e "  1. Buka  : ${C_B}$URL${C_0}"
+  echo -e "  2. Wizard WordPress akan memandu: pilih bahasa → judul site →"
+  echo -e "     username admin → password (BUAT YANG KUAT)"
+  echo -e "  3. Selesai wizard → login: $URL/wp-login.php"
+  echo -e "  4. Opsional: ${C_B}wpk site $D${C_0} → 1 (install plugin+tema standar)"
+  echo ""
+  echo -e "  ${C_Y}Catatan: DB pass tersimpan di $REG_FILE${C_0}"
 }
 
 # ==============================================================
@@ -797,7 +785,7 @@ cmd_site() {
   while true; do
     echo ""
     echo -e "${C_B}  ── MANAGE: $D ──${C_0}"
-    echo "   1) Install WordPress lengkap (core+plugin+tema+SEO+security)"
+    echo "   1) Install paket lengkap (plugin+tema+SEO+security) — setelah wizard"
     echo "   2) Info & kredensial"
     echo "   3) Plugin: list / install / aktif / update"
     echo "   4) Tema: aktifkan / update"
@@ -862,32 +850,6 @@ wp_full_install() {
   $wp plugin auto-updates enable --all --quiet 2>/dev/null
   $wp theme auto-updates enable --all --quiet 2>/dev/null
 
-  # ---- ONBOARDING PAGE: front page pembuka rapi (bukan blank) ----
-  $wp option update timezone_string 'Asia/Jakarta' --quiet 2>/dev/null
-  local SUB="${D%%.*}"
-  local MAIN="${D#*.}"
-  $wp option update blogname "${SUB^}" --quiet 2>/dev/null
-  $wp option update blogdescription "Informasi, tips & referensi terbaru" --quiet 2>/dev/null
-  # halaman Home onboarding
-  $wp post create --post_type=page --post_status=publish --post_name=home \
-    --post_title="Selamat Datang di ${SUB^}" \
-    --post_content="<h2>Website ini sedang dalam persiapan</h2><p>Konten berkualitas sedang kami siapkan untuk Anda. Nantikan artikel-artikel terbaru seputar topik menarik yang akan segera hadir di sini.</p><p>— Tim ${SUB^}</p>" \
-    --quiet 2>/dev/null && ok "halaman onboarding dibuat"
-  # halaman Blog (daftar artikel)
-  $wp post create --post_type=page --post_status=publish --post_name=blog \
-    --post_title="Blog" --post_content="" --quiet 2>/dev/null
-  local HOME_ID BLOG_ID
-  HOME_ID=$($wp post list --post_type=page --name=home --field=ID 2>/dev/null)
-  BLOG_ID=$($wp post list --post_type=page --name=blog --field=ID 2>/dev/null)
-  [ -n "$HOME_ID" ] && $wp option update show_on_front page --quiet 2>/dev/null \
-    && $wp option update page_on_front "$HOME_ID" --quiet 2>/dev/null \
-    && ok "front page = onboarding"
-  [ -n "$BLOG_ID" ] && $wp option update page_for_posts "$BLOG_ID" --quiet 2>/dev/null
-  # menu primary: Home + Blog
-  $wp menu create "Primary" --quiet 2>/dev/null
-  $wp menu item add-post Primary "$HOME_ID" --quiet 2>/dev/null
-  [ -n "$BLOG_ID" ] && $wp menu item add-post Primary "$BLOG_ID" --quiet 2>/dev/null
-  $wp menu location assign Primary primary --quiet 2>/dev/null && ok "menu primary di-set"
   # favicon placeholder di-set saat add logo; site icon via media nanti
   wp_purge "$D"
   ok "INSTALL LENGKAP — site siap isi konten"
@@ -1275,7 +1237,7 @@ cmd_menu() {
     echo -e "${C_B}  ║   WPK — WordPress Kit (All-in-One)       ║${C_0}"
     echo -e "${C_B}  ╚══════════════════════════════════════════╝${C_0}"
     echo -e "  ${C_G}── WORDPRESS ──${C_0}"
-    echo "   1) INSTALL WordPress baru (subdomain → live lengkap)"
+    echo "   1) INSTALL WordPress baru (kosong, setup via wizard browser)"
     echo "   2) Daftar site"
     echo "   3) Manage site (install lengkap, plugin, tema, user...)"
     echo -e "  ${C_G}── SERVER ──${C_0}"
