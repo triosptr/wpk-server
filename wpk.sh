@@ -240,10 +240,17 @@ open_file_cache max=10000 inactive=30s;
 open_file_cache_valid 60s;
 open_file_cache_min_uses 2;
 open_file_cache_errors on;
+EOF
+  # brotli hanya ditulis bila module terload (auto-enabled via apt install step 1)
+  if ls /etc/nginx/modules-enabled/*brotli* >/dev/null 2>&1 || nginx -V 2>&1 | grep -q brotli; then
+    cat >> /etc/nginx/conf.d/wpk.conf <<'BREOF'
 brotli on;
 brotli_comp_level 6;
 brotli_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml image/svg+xml;
-EOF
+BREOF
+  else
+    warn "module brotli tidak tersedia — lanjut dengan gzip saja"
+  fi
   # gzip/sendfile TIDAK ditulis di sini — sudah ada di nginx.conf utama (hindari duplikat)
   cat > /etc/nginx/conf.d/wpk-tls.conf <<'TLSEOF'
 ssl_session_cache shared:SSL:20m;
@@ -265,6 +272,10 @@ add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" alway
 EOF
   # hapus sisa konflik duplikat dari versi lama
   sed -i -E '/^\s*(sendfile|tcp_nopush|tcp_nodelay|directio|output_buffers|gzip|gzip_vary|gzip_comp_level|gzip_min_length|gzip_types) /d' /etc/nginx/conf.d/wpk.conf 2>/dev/null
+  # brotli directive tanpa module = nginx mati — buang
+  if ! ls /etc/nginx/modules-enabled/*brotli* >/dev/null 2>&1 && ! nginx -V 2>&1 | grep -q brotli; then
+    sed -i -E '/^\s*brotli(_comp_level|_types)? /d' /etc/nginx/conf.d/wpk.conf 2>/dev/null
+  fi
   # main ctx: worker tuning (conf.d tidak bisa menampung main ctx)
   NG=/etc/nginx/nginx.conf
   grep -q "worker_rlimit_nofile 65535" $NG || {
@@ -784,7 +795,9 @@ cmd_site() {
       9) wp_debug_toggle "$D";;
       10) wp_maintenance "$D";;
       0) break;;
+      "") break;;
     esac
+    [ -t 0 ] || break
     [ "$p" != "0" ] && read -rp "  Enter..."
   done
   [ -z "$IN_MENU" ] && { ok "kembali ke menu utama..."; cmd_menu; }
@@ -858,6 +871,7 @@ wp_user_menu() {
   case $sp in
     a) $wp user list --fields=ID,user_login,roles,email;;
     b) read -rp "  username baru: " u; read -rp "  email: " e
+       [ -z "$u" ] || [ -z "$e" ] && { err "username & email wajib diisi"; return; }
        local np; np=$(openssl rand -base64 14 | tr -d '/+=')
        $wp user create "$u" "$e" --role=administrator --user_pass="$np" --quiet &&        ok "admin dibuat: $u / $np (CATAT SEKARANG)";;
     c) read -rp "  username: " u
@@ -945,7 +959,9 @@ cmd_server() {
       11) cmd_security;;
       12) cmd_verify;;
       0) break;;
+      "") break;;
     esac
+    [ -t 0 ] || break
     [ "$p" != "0" ] && read -rp "  Enter..."
   done
   [ -z "$IN_MENU" ] && { ok "kembali ke menu utama..."; cmd_menu; }
@@ -1237,7 +1253,10 @@ cmd_menu() {
       11) cmd_update_self;;
       12) read -rp "  Domain: " d; [ -n "$d" ] && cmd_repair "$d";;
       0) exit 0;;
+      "") exit 0;;
     esac
+    # guard EOF: kalau stdin habis (bukan interaktif), keluar — cegah infinite loop
+    [ -t 0 ] || { echo ""; break; }
     [ "$p" != "0" ] && read -rp "  Enter..."
   done
 }
