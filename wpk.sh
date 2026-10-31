@@ -674,7 +674,12 @@ cmd_creds() {
   db=$(reg_get "$D" 2); dbuser=$(reg_get "$D" 3); admin=$(reg_get "$D" 4); pass=$(reg_get "$D" 5)
   [ -z "$db" ] && { err "$D tidak terdaftar"; exit 1; }
   echo "  Domain : $D"
-  echo "  Admin  : $admin / $pass"
+  if [ "$admin" = "wizard-setup" ]; then
+    echo "  Admin  : (di-setup via wizard browser — belum/belum dicatat)"
+    echo "           setelah wizard, catat manual atau: wpk site $D → 5c reset"
+  else
+    echo "  Admin  : $admin / $pass"
+  fi
   echo "  DB     : $db ($dbuser)"
   local dbpass
   if [ -f "/var/www/$D/wp-config.php" ]; then
@@ -1207,21 +1212,12 @@ cmd_repair() {
   # SSL kalau belum ada
   [ -d "/etc/letsencrypt/live/$D" ] || cmd_ssl "$D"
 
-  # core install kalau belum
+  # skema kosong: JANGAN core-install via CLI — wizard browser yang install
   local URL="https://$D"; [ -d "/etc/letsencrypt/live/$D" ] || URL="http://$D"
-  if ! sudo -u www-data /usr/local/bin/wp core is-installed --path="/var/www/$D" 2>/dev/null; then
-    local ADMINPASS; ADMINPASS=$(openssl rand -base64 16 | tr -d '/+=')
-    local ADMINUSER="wp_$(tr -dc 'a-z' </dev/urandom | head -c 6)"
-    sudo -u www-data /usr/local/bin/wp core install --path="/var/www/$D" --url="$URL" --title="$D" \
-      --admin_user="$ADMINUSER" --admin_password="$ADMINPASS" --admin_email="info@${D#*.}" --skip-email --quiet
-    sudo -u www-data /usr/local/bin/wp option update default_comment_status closed --path="/var/www/$D"
-    sudo -u www-data /usr/local/bin/wp option update default_ping_status closed --path="/var/www/$D"
-    sudo -u www-data /usr/local/bin/wp rewrite structure '/%postname%/' --hard --path="/var/www/$D"
-    reg_add "$D" "$DBNAME" "$DBUSER" "$ADMINUSER" "$ADMINPASS"
-    ok "WordPress terinstall"
-    echo -e "  ${C_G}Admin: $ADMINUSER / $ADMINPASS${C_0}"
+  if sudo -u www-data /usr/local/bin/wp core is-installed --path="/var/www/$D" 2>/dev/null; then
+    ok "WP sudah terinstall"
   else
-    ok "WP sudah terinstall — verifikasi:"
+    ok "WordPress kosong — buka $URL untuk setup wizard (bahasa→judul→admin→password)"
   fi
   curl -sk -o /dev/null -m 5 "$URL" && ok "site UP: $URL" || warn "site belum merespon (DNS/propagasi)"
 }
