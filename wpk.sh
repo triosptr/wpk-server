@@ -463,31 +463,47 @@ cmd_ssl() {
   certbot certonly --webroot -w /var/www/_letsencrypt -d "$D" \
     --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || { err "certbot gagal (cek DNS resolve + proxy CF OFF)"; return; }
 
-  # patch vhost → https + redirect (idempotent)
+  # patch vhost → regen HTTPS dari template (bersih, tak bisa merusak struktur)
   python3 - "$D" <<'PYEOF'
-import sys
+import sys, re
 d = sys.argv[1]
-p = f"/etc/nginx/sites-available/{d}"
-s = open(p).read()
-if "listen 443" not in s:
-    s = s.replace(
-        "listen 80;",
-        f"listen 443 ssl http2;\n"
-        f"    ssl_certificate /etc/letsencrypt/live/{d}/fullchain.pem;\n"
-        f"    ssl_certificate_key /etc/letsencrypt/live/{d}/privkey.pem;\n"
-        f"    ssl_protocols TLSv1.2 TLSv1.3;\n"
-        f"    ssl_prefer_server_ciphers on;\n\n"
-        f"server {{\n"
-        f"    listen 80;\n"
-        f"    server_name {d};\n"
-        f"    return 301 https://$host$request_uri;\n"
-        f"}}\n\nserver {{",
-        1
-    )
-    open(p, "w").write(s)
+tp = "/root/wpk.vhost.template"
+tmpl = open(tp).read()
+body = tmpl.replace("__DOMAIN__", d).replace("__SOCKET__", "/run/php/php8.3-fpm-wp.sock")
+# ambil blok server pertama (isi) dari template
+m = re.search(r"server\s*\{(.*)\}\s*$", body, re.S)
+inner = m.group(1).rstrip() if m else body
+vhost = f"""# WPK vhost HTTPS - {d}
+server {{
+    listen 443 ssl http2;
+    server_name {d};
+    root /var/www/{d};
+    index index.php;
+{inner}
+    ssl_certificate /etc/letsencrypt/live/{d}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{d}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    include /etc/nginx/snippets/security_headers.conf;
+}}
+
+# HTTP -> HTTPS
+server {{
+    listen 80;
+    server_name {d};
+    location ^~ /.well-known/acme-challenge/ {{ root /var/www/_letsencrypt; }}
+    location / {{ return 301 https://$host$request_uri; }}
+}}
+"""
+open(f"/etc/nginx/sites-available/{d}", "w").write(vhost)
 PYEOF
-  nginx -t >/dev/null && systemctl reload nginx
-  ok "SSL aktif + redirect https: $D"
+  ln -sf "/etc/nginx/sites-available/$D" "/etc/nginx/sites-enabled/$D"
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx
+    ok "SSL aktif + redirect https: $D"
+  else
+    err "nginx test gagal: $(nginx -t 2>&1 | tail -1)"
+  fi
 }
 
 # ==============================================================
