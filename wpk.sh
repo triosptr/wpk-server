@@ -378,7 +378,16 @@ cmd_add() {
   [ -f "$VHOST_TEMPLATE" ] || { err "base belum jalan — jalankan 'wpk base' dulu"; exit 1; }
   detect_phpver
 
-  hdr "WPK ADD SITE — $D"
+  hdr "INSTALL WORDPRESS BARU — $D"
+  echo -e "  ${C_Y}Langkah yang akan dijalankan otomatis:${C_0}"
+  echo -e "   1. Database + user random"
+  echo -e "   2. WordPress core download"
+  echo -e "   3. vhost nginx + security"
+  echo -e "   4. SSL Let's Encrypt"
+  echo -e "   5. Install WP (admin+pass otomatis, tanpa wizard)"
+  echo -e "   6. Plugin standar + tema Kadence + security config"
+  echo -e "   7. Verifikasi site LIVE (HTTP 200)"
+  echo ""
   getent hosts "$D" >/dev/null || warn "DNS $D belum resolve (SSL bisa gagal — jalankan 'wpk ssl $D' nanti)"
 
   local DBNAME="wp_${D//./_}" DBUSER="u_${D//./_}"
@@ -1146,7 +1155,7 @@ cmd_menu() {
     echo -e "${C_B}  ║   WPK — WordPress Kit (All-in-One)       ║${C_0}"
     echo -e "${C_B}  ╚══════════════════════════════════════════╝${C_0}"
     echo -e "  ${C_G}── WORDPRESS ──${C_0}"
-    echo "   1) Tambah site baru (wpk add)"
+    echo "   1) INSTALL WordPress baru (subdomain → live lengkap)"
     echo "   2) Daftar site"
     echo "   3) Manage site (install lengkap, plugin, tema, user...)"
     echo -e "  ${C_G}── SERVER ──${C_0}"
