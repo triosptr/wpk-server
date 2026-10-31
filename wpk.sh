@@ -96,7 +96,8 @@ cmd_base() {
   fi
   apt-get install -y -qq php8.3-fpm php8.3-cli php8.3-mysql php8.3-curl \
     php8.3-gd php8.3-xml php8.3-zip php8.3-mbstring php8.3-intl \
-    php8.3-opcache php8.3-bcmath php8.3-imagick >/dev/null 2>&1
+    php8.3-opcache php8.3-bcmath php8.3-imagick \
+    libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static >/dev/null 2>&1
   [ -x /usr/local/bin/wp ] || {
     curl -sS https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o /usr/local/bin/wp
     chmod +x /usr/local/bin/wp
@@ -239,8 +240,19 @@ open_file_cache max=10000 inactive=30s;
 open_file_cache_valid 60s;
 open_file_cache_min_uses 2;
 open_file_cache_errors on;
+brotli on;
+brotli_comp_level 6;
+brotli_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml image/svg+xml;
 EOF
   # gzip/sendfile TIDAK ditulis di sini — sudah ada di nginx.conf utama (hindari duplikat)
+  cat > /etc/nginx/conf.d/wpk-tls.conf <<'TLSEOF'
+ssl_session_cache shared:SSL:20m;
+ssl_session_timeout 1d;
+ssl_session_tickets on;
+ssl_early_data on;
+resolver 1.1.1.1 8.8.8.8 valid=300s;
+resolver_timeout 5s;
+TLSEOF
   mkdir -p /etc/nginx/snippets /etc/nginx/fcgi_cache /var/www/_letsencrypt
   chmod 755 /var/www /var/www/_letsencrypt
   mkdir -p /var/www/_letsencrypt/.well-known/acme-challenge && chmod -R 755 /var/www/_letsencrypt/.well-known
@@ -378,6 +390,13 @@ cmd_add() {
   [ -f "$VHOST_TEMPLATE" ] || { err "base belum jalan — jalankan 'wpk base' dulu"; exit 1; }
   detect_phpver
 
+  # self-heal: template wajib FULL (punya server{}); kalau inner-only/korup → tarik dari repo
+  if [ ! -s "$VHOST_TEMPLATE" ] || ! grep -q "^server {" "$VHOST_TEMPLATE"; then
+    warn "template vhost tidak valid — menarik dari repo..."
+    curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.vhost.template -o "$VHOST_TEMPLATE" 2>/dev/null
+    grep -q "^server {" "$VHOST_TEMPLATE" || { err "template tetap invalid — cek internet server"; exit 1; }
+    ok "template diperbaiki"
+  fi
   hdr "INSTALL WORDPRESS BARU — $D"
   echo -e "  ${C_Y}Langkah yang akan dijalankan otomatis:${C_0}"
   echo -e "   1. Database + user random"
@@ -405,8 +424,25 @@ cmd_add() {
   # WP core
   mkdir -p "/var/www/$D"
   if [ ! -f "/var/www/$D/wp-config.php" ]; then
-    wp core download --path="/var/www/$D" --quiet --allow-root
-    wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet --allow-root
+    if ! wp core download --path="/var/www/$D" --quiet --allow-root; then
+      err "download WordPress core gagal (cek internet server)"; return 1
+    fi
+    if ! wp config create --path="/var/www/$D" --dbname="$DBNAME" --dbuser="$DBUSER" --dbpass="$DBPASS" --dbhost=localhost --quiet --allow-root; then
+      err "wp config create gagal (DB/password)"; return 1
+    fi
+    # config-extra wajib bersih — kalau mengandung racun add_filter, tulis ulang inline
+    if [ ! -s "$WP_CONFIG_EXTRA" ] || grep -q "add_filter" "$WP_CONFIG_EXTRA" 2>/dev/null; then
+      cat > "$WP_CONFIG_EXTRA" <<'CFGEOF'
+define('DISALLOW_FILE_EDIT', true);
+define('DISABLE_WP_CRON', true);
+define('WP_POST_REVISIONS', 5);
+define('EMPTY_TRASH_DAYS', 7);
+define('WP_AUTO_UPDATE_CORE', 'minor');
+define('FORCE_SSL_ADMIN', true);
+define('WP_MEMORY_LIMIT', '128M');
+define('WP_MAX_MEMORY_LIMIT', '192M');
+CFGEOF
+    fi
     if ! grep -q DISALLOW_FILE_EDIT "/var/www/$D/wp-config.php"; then
       echo "" >> "/var/www/$D/wp-config.php"
       cat "$WP_CONFIG_EXTRA" >> "/var/www/$D/wp-config.php"
@@ -513,6 +549,7 @@ cmd_ssl() {
 # ==============================================================
 cmd_verify() {
   hdr "CHECKLIST VERIFIKASI"
+  detect_phpver
   NTOT=17
   local pass=0 fail=0
 
@@ -1084,6 +1121,12 @@ cmd_repair() {
   detect_phpver
   [ -d "/var/www/$D" ] || { err "docroot tidak ada"; exit 1; }
 
+  # self-heal: pastikan semua asset repo ada (inner, generator)
+  R="https://raw.githubusercontent.com/triosptr/wpk-server/main"
+  [ -s /root/wpk.vhost.inner ] || curl -fsSL "$R/wpk.vhost.inner" -o /root/wpk.vhost.inner 2>/dev/null
+  [ -s /root/wpk_ssl_gen.py ] || curl -fsSL "$R/wpk_ssl_gen.py" -o /root/wpk_ssl_gen.py 2>/dev/null
+  [ -s "$VHOST_TEMPLATE" ] || curl -fsSL "$R/wpk.vhost.template" -o "$VHOST_TEMPLATE" 2>/dev/null
+
   # WP core download ulang kalau index.php tidak ada
   if [ ! -f "/var/www/$D/index.php" ]; then
     wp core download --path="/var/www/$D" --allow-root --force --quiet && ok "WP core di-download ulang"
@@ -1205,7 +1248,11 @@ cmd_menu() {
 case "$1" in
   -boot)      # one-liner mode: pasang diri + banner + base
     cp "$0" /root/wpk.sh 2>/dev/null; chmod +x /root/wpk.sh
-    curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.vhost.template -o "$VHOST_TEMPLATE" 2>/dev/null
+    R="https://raw.githubusercontent.com/triosptr/wpk-server/main"
+    curl -fsSL "$R/wpk.vhost.template" -o "$VHOST_TEMPLATE" 2>/dev/null
+    curl -fsSL "$R/wpk.vhost.inner" -o /root/wpk.vhost.inner 2>/dev/null
+    curl -fsSL "$R/wpk_ssl_gen.py" -o /root/wpk_ssl_gen.py 2>/dev/null
+    curl -fsSL "$R/wpk-config-extra.php" -o "$WP_CONFIG_EXTRA" 2>/dev/null
     ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
     bash /root/wpk.sh banner >/dev/null 2>&1
     echo ">>> WPK terpasang. Mulai instalasi server... <<<"
@@ -1230,6 +1277,6 @@ case "$1" in
   banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
-  *) echo "WPK v2.2 — perintah tidak dikenal: $1"
+  *) echo "WPK v4.0 — perintah tidak dikenal: $1"
      echo "Pakai: wpk | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
