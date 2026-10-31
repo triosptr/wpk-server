@@ -1028,6 +1028,22 @@ EOF
   echo -e "  Diperbaiki: ${C_G}$fixed poin${C_0} — cek ulang: ${C_B}wpk verify${C_0}"
 }
 
+# ==============================================================
+#  COMMAND: update-self — tarik versi terbaru dari GitHub repo
+# ==============================================================
+cmd_update_self() {
+  local TMP="/tmp/wpk.sh.new"
+  curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.sh -o "$TMP" || { err "download gagal (cek internet server)"; return; }
+  bash -n "$TMP" || { err "file baru invalid — batal"; return; }
+  if cmp -s "$TMP" /root/wpk.sh 2>/dev/null; then
+    ok "sudah versi terbaru"
+  else
+    mv "$TMP" /root/wpk.sh && chmod +x /root/wpk.sh
+    ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
+    ok "WPK updated → jalankan ulang: wpk"
+  fi
+}
+
 #  MENU INTERAKTIF
 # ==============================================================
 cmd_menu() {
@@ -1050,6 +1066,7 @@ cmd_menu() {
     echo -e "  ${C_G}── LAINNYA ──${C_0}"
     echo "   9) Install base server (sekali saja)"
     echo "  10) Banner JUMANJI (MOTD)"
+    echo "  11) Update WPK ke versi terbaru"
     echo "   0) Keluar"
     echo ""
     read -rp "  Pilih: " p
@@ -1064,6 +1081,7 @@ cmd_menu() {
       8) cmd_fix;;
       9) cmd_base;;
       10) cmd_banner;;
+      11) cmd_update_self;;
       0) exit 0;;
     esac
     [ "$p" != "0" ] && read -rp "  Enter..."
@@ -1095,9 +1113,10 @@ case "$1" in
   fix)        cmd_fix;;
   site)       shift; cmd_site "$@";;
   server)     cmd_server;;
+  self-update) cmd_update_self;;
   banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
-  *) echo "WPK v2.0 — perintah tidak dikenal: $1"
+  *) echo "WPK v2.1 — perintah tidak dikenal: $1"
      echo "Pakai: wpk | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
