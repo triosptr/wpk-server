@@ -1221,12 +1221,17 @@ EOF
 cmd_update_self() {
   local TMP="/tmp/wpk.sh.new" TMPV="/tmp/wpk.vhost.new" TMPC="/tmp/wpk.cfg.new"
   curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.sh -o "$TMP" || { err "download gagal (cek internet server)"; return; }
-  curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.vhost.template -o "$TMPV" 2>/dev/null
-  curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk-config-extra.php -o "$TMPC" 2>/dev/null
+  local R="https://raw.githubusercontent.com/triosptr/wpk-server/main"
+  curl -fsSL "$R/wpk.vhost.template" -o "$TMPV" 2>/dev/null
+  curl -fsSL "$R/wpk-config-extra.php" -o "$TMPC" 2>/dev/null
+  curl -fsSL "$R/wpk.vhost.inner" -o /root/wpk.vhost.inner 2>/dev/null
+  curl -fsSL "$R/wpk-watchdog.sh" -o /root/wpk-watchdog.sh 2>/dev/null
+  curl -fsSL "$R/wpk_ssl_gen.py" -o /root/wpk_ssl_gen.py 2>/dev/null
   bash -n "$TMP" || { err "file baru invalid — batal"; return; }
   mv "$TMP" /root/wpk.sh && chmod +x /root/wpk.sh
   [ -s "$TMPV" ] && mv "$TMPV" "$VHOST_TEMPLATE"
   [ -s "$TMPC" ] && mv "$TMPC" "$WP_CONFIG_EXTRA"
+  [ -s /root/wpk-watchdog.sh ] && chmod +x /root/wpk-watchdog.sh
   ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
   ok "WPK updated → jalankan ulang: wpk"
 }
