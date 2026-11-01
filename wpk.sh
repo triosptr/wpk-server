@@ -50,6 +50,29 @@ err()  { echo -e "  ${C_R}✗${C_0} $1"; }
 step() { echo -e "\n${C_B}── [$1/$NTOT] $2 ──${C_0}"; }
 hdr()  { echo -e "\n${C_B}══════════════════════════════════════════${C_0}\n${C_B}  $1${C_0}\n${C_B}══════════════════════════════════════════${C_0}"; }
 
+# ---------- helper: install WP-CLI multi-source ----------
+install_wpcli() {
+  local DST="/usr/local/bin/wp"
+  local R="https://raw.githubusercontent.com/triosptr/wpk-server/main/wp-cli.phar"
+  # 1. repo sendiri (paling stabil — dependency kita)
+  if curl -fsSL -m 120 "$R" -o "$DST" 2>/dev/null && [ $(stat -c%s "$DST" 2>/dev/null || echo 0) -gt 5000000 ]; then
+    chmod +x "$DST"
+    wp --allow-root --version >/dev/null 2>&1 && return 0
+  fi
+  # 2. wp-cli resmi
+  if curl -fsSL -m 120 https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o "$DST" 2>/dev/null && [ $(stat -c%s "$DST" 2>/dev/null || echo 0) -gt 5000000 ]; then
+    chmod +x "$DST"
+    wp --allow-root --version >/dev/null 2>&1 && return 0
+  fi
+  # 3. GitHub release
+  if curl -fsSL -m 120 https://github.com/wp-cli/wp-cli/releases/download/v2.11.0/wp-cli-2.11.0.phar -o "$DST" 2>/dev/null && [ $(stat -c%s "$DST" 2>/dev/null || echo 0) -gt 5000000 ]; then
+    chmod +x "$DST"
+    wp --allow-root --version >/dev/null 2>&1 && return 0
+  fi
+  rm -f "$DST"
+  return 1
+}
+
 # ---------- helpers ----------
 detect_phpver() {
   for v in 8.3 8.2 8.1 8.0; do
@@ -98,10 +121,13 @@ cmd_base() {
     php8.3-gd php8.3-xml php8.3-zip php8.3-mbstring php8.3-intl \
     php8.3-opcache php8.3-bcmath php8.3-imagick \
     libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static >/dev/null 2>&1
-  [ -x /usr/local/bin/wp ] || {
-    curl -sS https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o /usr/local/bin/wp
-    chmod +x /usr/local/bin/wp
-  }
+  if ! wp --allow-root --version >/dev/null 2>&1; then
+    if install_wpcli; then
+      ok "wp-cli terpasang"
+    else
+      warn "wp-cli gagal di-install (koneksi GitHub?) — jalankan: wpk fix"
+    fi
+  else ok "wp-cli sudah ada"; fi
   detect_phpver
   ok "paket terpasang (PHP $PHPV + wp-cli)"
 
@@ -575,14 +601,16 @@ cmd_ssl() {
 cmd_verify() {
   hdr "CHECKLIST VERIFIKASI"
   detect_phpver
-  NTOT=17
+  local HAS_SITE=0
+  [ -s "$REG_FILE" ] && HAS_SITE=1
+  if [ $HAS_SITE = 1 ]; then NTOT=18; else NTOT=17; fi
   local pass=0 fail=0
 
   v() { # v <nomor> <deskripsi> <exit_code_cek_sebelumnya>
     if [ "$3" = 0 ]; then
-      echo -e "  ${C_G}[$1/17] PASS${C_0}  $2"; pass=$((pass+1))
+      echo -e "  ${C_G}[$1/$NTOT] PASS${C_0}  $2"; pass=$((pass+1))
     else
-      echo -e "  ${C_R}[$1/17] GAGAL${C_0} $2"; fail=$((fail+1))
+      echo -e "  ${C_R}[$1/$NTOT] GAGAL${C_0} $2"; fail=$((fail+1))
     fi
   }
 
@@ -620,6 +648,19 @@ cmd_verify() {
   [ "$(sysctl -n kernel.kptr_restrict 2>/dev/null)" = "2" ] && [ "$(sysctl -n kernel.dmesg_restrict 2>/dev/null)" = "1" ]; v 16 "Kernel hardening aktif (kptr/dmesg restrict)" $?
   # 17 cipher ssh
   sshd -T 2>/dev/null | grep -q "chacha20-poly1305"; v 17 "SSH cipher modern (chacha20/aes-gcm)" $?
+  # 18 site live check (kalau ada site terdaftar)
+  if [ -s "$REG_FILE" ]; then
+    local any_up=0
+    while IFS='|' read -r sd _; do
+      [ -z "$sd" ] && continue
+      local U="https://$sd"; [ -d "/etc/letsencrypt/live/$sd" ] || U="http://$sd"
+      curl -sk -o /dev/null -m 8 "$U" && any_up=1 && break
+    done < "$REG_FILE"
+    [ $any_up = 1 ]; v 18 "Minimal satu site merespon (live check)" $?
+  else
+    NTOT=17  # tanpa site, kembali ke 17 poin
+    v 17 "Belum ada site terdaftar (skip live check)" 0
+  fi
 
   echo ""
   if [ $fail = 0 ]; then
@@ -1038,16 +1079,47 @@ cmd_fix() {
 
   # --- nginx: bersihkan duplikat dari versi lama + reload ---
   if [ -f /etc/nginx/conf.d/wpk.conf ]; then
-    sed -i -E '/^\s*(sendfile|tcp_nopush|tcp_nodelay|directio|output_buffers|gzip|gzip_vary|gzip_comp_level|gzip_min_length|gzip_types) /d' /etc/nginx/conf.d/wpk.conf
-    nginx -t >/dev/null 2>&1 && systemctl reload nginx && ok "nginx config bersih & reload" || err "nginx masih error: $(nginx -t 2>&1 | tail -1)"
+    sed -i -E '/^\s*(sendfile|tcp_nopush|tcp_nodelay|directio|output_buffers|gzip|gzip_vary|gzip_comp_level|gzip_min_length|gzip_types|brotli|brotli_comp_level|brotli_types) /d' /etc/nginx/conf.d/wpk.conf
+    # brotli boleh kembali kalau module ada
+    if ls /etc/nginx/modules-enabled/*brotli* >/dev/null 2>&1 || nginx -V 2>&1 | grep -q brotli; then
+      grep -q "^brotli on;" /etc/nginx/conf.d/wpk.conf || cat >> /etc/nginx/conf.d/wpk.conf <<'BREOF'
+brotli on;
+brotli_comp_level 6;
+brotli_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml image/svg+xml;
+BREOF
+    fi
+  fi
+  # nginx mati total (config invalid)? cari & karantina vhost rusak lalu start
+  if ! systemctl is-active --quiet nginx; then
+    warn "nginx down — cari vhost invalid & karantina..."
+    for f in /etc/nginx/sites-enabled/*; do
+      [ -f "$f" ] || continue
+      BAK="/root/wpk-quarantine-$(basename $f)"
+      mv "$f" "$BAK" 2>/dev/null
+      if nginx -t >/dev/null 2>&1; then
+        warn "vhost $(basename $f) invalid → dikarantina ke $BAK"
+        systemctl reset-failed nginx 2>/dev/null; systemctl start nginx
+        systemctl is-active --quiet nginx && { ok "nginx hidup lagi"; fixed=$((fixed+1)); }
+        break
+      else
+        mv "$BAK" "$f"  # bukan dia yang rusak — kembalikan
+      fi
+    done
+    systemctl is-active --quiet nginx || { err "nginx tetap gagal start: $(nginx -t 2>&1 | tail -1)"; }
+  else
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx && ok "nginx OK" || err "nginx config error: $(nginx -t 2>&1 | tail -1)"
   fi
 
   # --- 5: WP-CLI ---
-  if ! wp --version >/dev/null 2>&1; then
-    warn "WP-CLI rusak/belum ada — download ulang..."
-    curl -sS https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o /usr/local/bin/wp
-    chmod +x /usr/local/bin/wp
-    wp --version >/dev/null 2>&1 && { ok "WP-CLI diperbaiki"; fixed=$((fixed+1)); } || err "WP-CLI masih gagal (cek koneksi github.com dari server: curl -sI https://raw.githubusercontent.com)"
+  if ! wp --allow-root --version >/dev/null 2>&1; then
+    warn "WP-CLI rusak/belum ada — coba 3 sumber..."
+    if install_wpcli; then
+      ok "WP-CLI diperbaiki"; fixed=$((fixed+1))
+    else
+      err "WP-CLI masih gagal. Diagnosa:"
+      echo -e "   ${C_Y}curl -sI -m 10 https://raw.githubusercontent.com/triosptr/wpk-server/main/wp-cli.phar${C_0}"
+      echo -e "   ${C_Y}→ kalau timeout: koneksi ke GitHub bermasalah dari server ini${C_0}"
+    fi
   else ok "WP-CLI OK"; fi
 
   # --- 11: port sensitif — hanya yang bind ke luar (0.0.0.0 / [::] / *) yang bahaya ---
