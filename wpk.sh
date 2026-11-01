@@ -416,6 +416,17 @@ EOF
   ok "SSH: MaxAuthTries 3 + cipher kuat (chacha20/aes-gcm) — port & password TIDAK diubah"
 
   touch "$REG_FILE" && chmod 600 "$REG_FILE"
+
+  # ---------- WATCHDOG: pengawal otomatis (cron 15 menit) ----------
+  if [ -f /root/wpk-watchdog.sh ]; then
+    chmod +x /root/wpk-watchdog.sh
+  fi
+  if [ -f /root/wpk-watchdog.sh ] && ! grep -q "wpk-watchdog" /etc/crontab 2>/dev/null; then
+    echo "*/15 * * * * root /bin/bash /root/wpk-watchdog.sh >/dev/null 2>&1" >> /etc/crontab
+    ok "watchdog terpasang (cron 15 menit)"
+  fi
+  touch /root/wpk-alerts.log && chmod 600 /root/wpk-alerts.log
+
   cmd_verify
 }
 
@@ -1294,6 +1305,37 @@ cmd_repair() {
   curl -sk -o /dev/null -m 5 "$URL" && ok "site UP: $URL" || warn "site belum merespon (DNS/propagasi)"
 }
 
+# ==============================================================
+#  COMMAND: alerts — lihat temuan watchdog
+# ==============================================================
+cmd_alerts() {
+  hdr "WPK ALERTS (watchdog)"
+  if [ ! -s /root/wpk-alerts.log ]; then
+    ok "tidak ada alert — semua aman"
+    return
+  fi
+  tail -30 /root/wpk-alerts.log
+  echo ""
+  echo -e "  ${C_Y}clear: > /root/wpk-alerts.log${C_0}"
+}
+
+# ==============================================================
+#  COMMAND: watchdog — pasang/paksa jalan watchdog
+# ==============================================================
+cmd_watchdog() {
+  [ -f /root/wpk-watchdog.sh ] || { err "wpk-watchdog.sh tidak ada — wpk self-update dulu"; return; }
+  chmod +x /root/wpk-watchdog.sh
+  if ! grep -q "wpk-watchdog" /etc/crontab 2>/dev/null; then
+    echo "*/15 * * * * root /bin/bash /root/wpk-watchdog.sh >/dev/null 2>&1" >> /etc/crontab
+    ok "watchdog cron terpasang (tiap 15 menit)"
+  else
+    ok "watchdog sudah terpasang"
+  fi
+  warn "jalankan manual sekali..."
+  bash /root/wpk-watchdog.sh
+  cmd_alerts
+}
+
 #  MENU INTERAKTIF
 # ==============================================================
 cmd_menu() {
@@ -1319,6 +1361,8 @@ cmd_menu() {
     echo "  10) Banner JUMANJI (MOTD)"
     echo "  11) Update WPK ke versi terbaru"
     echo "  12) REPAIR site bermasalah"
+    echo "  13) ALERTS — temuan watchdog"
+    echo "  14) Pasang/jalankan watchdog"
     echo "   0) Keluar"
     echo ""
     read -rp "  Pilih: " p
@@ -1335,6 +1379,8 @@ cmd_menu() {
       10) cmd_banner;;
       11) cmd_update_self;;
       12) read -rp "  Domain: " d; [ -n "$d" ] && cmd_repair "$d";;
+      13) cmd_alerts;;
+      14) cmd_watchdog;;
       0) exit 0;;
       "") exit 0;;
     esac
@@ -1376,6 +1422,8 @@ case "$1" in
   server)     cmd_server;;
   self-update) cmd_update_self;;
   repair)     shift; cmd_repair "$@";;
+  alerts)     cmd_alerts;;
+  watchdog)   cmd_watchdog;;
   banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
