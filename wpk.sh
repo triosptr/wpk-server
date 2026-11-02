@@ -691,8 +691,15 @@ cmd_ssl() {
     MODE="GREY"
     ok "DNS OK (proxy OFF/grey): $D -> $RESOLVED_IP"
   else
-    err "DNS $D -> $RESOLVED_IP bukan IP server ini & bukan Cloudflare"
-    echo -e "   ${C_Y}Periksa A record di Cloudflare${C_0}"
+    if [ -d "/var/www/$D" ]; then
+      err "DNS $D -> $RESOLVED_IP bukan IP server ini & bukan Cloudflare"
+      echo -e "   ${C_Y}TAPI docroot $D ADA di server ini — Bapak salah droplet!${C_0}"
+      echo -e "   ${C_B}SSH ke server yang benar: ssh root@$RESOLVED_IP${C_0}"
+      echo -e "   ${C_B}lalu: jumanji ssl $D${C_0}"
+    else
+      err "DNS $D -> $RESOLVED_IP bukan IP server ini & bukan Cloudflare"
+      echo -e "   ${C_Y}Periksa A record di Cloudflare${C_0}"
+    fi
     return 1
   fi
   # pastikan vhost pakai ^~ untuk acme (override deny dotfiles regex)
