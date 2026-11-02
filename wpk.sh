@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================
-#  WPK — WordPress Kit (All-in-One Server Provisioning)
+#  JUMANJI — WordPress Kit (All-in-One Server Provisioning)
 #  --------------------------------------------------------------
 #  Satu script untuk semuanya: base install server, deploy site,
 #  SSL, security, optimasi memori, backup, maintenance.
@@ -116,7 +116,7 @@ socket_path() { echo "/run/php/php${PHPV}-fpm-wp.sock"; }
 # ==============================================================
 cmd_base() {
   echo -e "\033[1;92m$BANNER\033[0m"
-  hdr "WPK — INSTALASI SERVER  ($(hostname))"
+  hdr "JUMANJI — INSTALASI SERVER  ($(hostname))"
   [ "$(id -u)" = 0 ] || { err "harus root"; exit 1; }
   NTOT=8
   echo -e "  Target  : server kosong -> siap WordPress"
@@ -359,7 +359,7 @@ EOF
   # ---------- 6. template vhost + wp-config ----------
   step 6 "Template vhost & wp-config hardening"
   cat > "$VHOST_TEMPLATE" <<'TEOF'
-# WPK vhost — __DOMAIN__
+# JUMANJI vhost — __DOMAIN__
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -1183,7 +1183,7 @@ cmd_banner() {
   {
     echo ""
     echo -e "$BANNER"
-    echo -e "  ${C_B}WPK — WordPress Kit${C_0}  |  $(hostname)  |  $(date +%Y)"
+    echo -e "  ${C_B}JUMANJI — WordPress Kit${C_0}  |  $(hostname)  |  $(date +%Y)"
     echo -e "  ${C_Y}Welcome to the jungle.${C_0}"
     echo ""
     echo "  Server : $(hostname) ($(curl -s -m 3 ifconfig.me 2>/dev/null || echo 'ip-unknown'))"
@@ -1226,7 +1226,7 @@ BREOF
     warn "nginx down — cari vhost invalid & karantina..."
     for f in /etc/nginx/sites-enabled/*; do
       [ -f "$f" ] || continue
-      BAK="/root/wpk-quarantine-$(basename $f)"
+      BAK="/root/jumanji-quarantine-$(basename $f)"
       mv "$f" "$BAK" 2>/dev/null
       if nginx -t >/dev/null 2>&1; then
         warn "vhost $(basename $f) invalid → dikarantina ke $BAK"
@@ -1354,7 +1354,8 @@ cmd_update_self() {
   [ -s "$TMPC" ] && mv "$TMPC" "$WP_CONFIG_EXTRA"
   [ -s /root/wpk-watchdog.sh ] && chmod +x /root/wpk-watchdog.sh
   ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
-  ok "WPK updated → jalankan ulang: wpk"
+  ln -sf /root/wpk.sh /usr/local/bin/jumanji 2>/dev/null
+  ok "JUMANJI updated → jalankan ulang: wpk"
 }
 
 # ==============================================================
@@ -1466,7 +1467,7 @@ cmd_closesmallport() {
 #  COMMAND: alerts — lihat temuan watchdog
 # ==============================================================
 cmd_alerts() {
-  hdr "WPK ALERTS (watchdog)"
+  hdr "JUMANJI ALERTS (watchdog)"
   if [ ! -s /root/wpk-alerts.log ]; then
     ok "tidak ada alert — semua aman"
     return
@@ -1501,7 +1502,7 @@ cmd_menu() {
     clear 2>/dev/null
     echo -e "\033[1;92m$BANNER\033[0m"
     echo -e "${C_B}  ╔══════════════════════════════════════════╗${C_0}"
-    echo -e "${C_B}  ║   WPK — WordPress Kit (All-in-One)       ║${C_0}"
+    echo -e "${C_B}  ║   JUMANJI — WordPress Kit (All-in-One)       ║${C_0}"
     echo -e "${C_B}  ╚══════════════════════════════════════════╝${C_0}"
     echo -e "  ${C_G}── WORDPRESS ──${C_0}"
     echo "   1) INSTALL WordPress baru (kosong, setup via wizard browser)"
@@ -1516,7 +1517,7 @@ cmd_menu() {
     echo -e "  ${C_G}── LAINNYA ──${C_0}"
     echo "   9) Install base server (sekali saja)"
     echo "  10) Banner JUMANJI (MOTD)"
-    echo "  11) Update WPK ke versi terbaru"
+    echo "  11) Update JUMANJI ke versi terbaru"
     echo "  12) REPAIR site bermasalah"
     echo "  13) ALERTS — temuan watchdog"
     echo "  14) Pasang/jalankan watchdog"
@@ -1561,8 +1562,9 @@ case "$1" in
     curl -fsSL "$R/wpk_ssl_gen.py" -o /root/wpk_ssl_gen.py 2>/dev/null
     curl -fsSL "$R/wpk-config-extra.php" -o "$WP_CONFIG_EXTRA" 2>/dev/null
     ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
+    ln -sf /root/wpk.sh /usr/local/bin/jumanji 2>/dev/null
     bash /root/wpk.sh banner >/dev/null 2>&1
-    echo ">>> WPK terpasang. Mulai instalasi server... <<<"
+    echo ">>> JUMANJI terpasang. Mulai instalasi server... <<<"
     cmd_base;;
   base)       cmd_base;;
   add)        shift; cmd_add "$@";;
@@ -1587,6 +1589,6 @@ case "$1" in
   banner)     shift; cmd_banner "$@";;
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
-  *) echo "WPK v4.0 — perintah tidak dikenal: $1"
+  *) echo "JUMANJI v4.0 — perintah tidak dikenal: $1"
      echo "Pakai: wpk | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
