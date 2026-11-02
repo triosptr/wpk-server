@@ -267,6 +267,8 @@ aio threads;
 fastcgi_cache_path /etc/nginx/fcgi_cache levels=1:2 keys_zone=WPGLOBAL:128m inactive=120m use_temp_path=off;
 fastcgi_cache_key "$scheme$request_method$host$request_uri";
 fastcgi_cache_use_stale error timeout invalid_header updating http_500 http_503;
+fastcgi_cache_lock on;
+fastcgi_cache_lock_timeout 5s;
 add_header X-FastCGI-Cache $upstream_cache_status always;
 fastcgi_cache_valid 200 301 302 120m;
 client_max_body_size 32m;
@@ -280,6 +282,9 @@ open_file_cache max=10000 inactive=30s;
 open_file_cache_valid 60s;
 open_file_cache_min_uses 2;
 open_file_cache_errors on;
+reset_timedout_connection on;
+keepalive_requests 1000;
+http2_max_concurrent_streams 128;
 EOF
   # brotli hanya ditulis bila module terload (auto-enabled via apt install step 1)
   if ls /etc/nginx/modules-enabled/*brotli* >/dev/null 2>&1 || nginx -V 2>&1 | grep -q brotli; then
@@ -651,13 +656,18 @@ cmd_ssl() {
   fi
 
   # patch vhost → regen HTTPS dari template (bersih, tak bisa merusak struktur)
-  python3 /root/wpk_ssl_gen.py "$D"
+  python3 /root/wpk_ssl_gen.py "$D" || { err "generator vhost gagal"; return 1; }
   ln -sf "/etc/nginx/sites-available/$D" "/etc/nginx/sites-enabled/$D"
   if nginx -t >/dev/null 2>&1; then
     systemctl reload nginx
     ok "SSL aktif + redirect https: $D"
   else
-    err "nginx test gagal: $(nginx -t 2>&1 | tail -1)"
+    local EMSG; EMSG=$(nginx -t 2>&1 | tail -1)
+    if echo "$EMSG" | grep -q "WPGLOBAL"; then
+      err "zone FastCGI belum ada — jalankan 'wpk base' dulu di server ini"
+    else
+      err "nginx test gagal: $EMSG"
+    fi
   fi
 }
 
