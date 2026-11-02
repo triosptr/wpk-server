@@ -139,7 +139,7 @@ cmd_base() {
     if install_wpcli; then
       ok "wp-cli terpasang"
     else
-      warn "wp-cli gagal di-install (koneksi GitHub?) — jalankan: wpk fix"
+      warn "wp-cli gagal di-install (koneksi GitHub?) — jalankan: jumanji fix"
     fi
   else ok "wp-cli sudah ada"; fi
   detect_phpver
@@ -483,7 +483,7 @@ EOF
     ok "SSH dual-port aktif: 22 + $NEW_SSH_PORT (anti-lockout)"
     echo -e "  ${C_Y}PENTING: setelah selesai & reboot, login via:${C_0}"
     echo -e "    ${C_B}ssh -p $NEW_SSH_PORT root@$(hostname -I | awk '{print $1}')${C_0}"
-    echo -e "  ${C_Y}Setelah login sukses via port baru, port 22 ditutup otomatis oleh watchdog / jalankan: wpk closesmallport${C_0}"
+    echo -e "  ${C_Y}Setelah login sukses via port baru, port 22 ditutup otomatis oleh watchdog / jalankan: jumanji closesmallport${C_0}"
   fi
   sshd -t && systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
   ok "SSH hardening selesai (MaxAuthTries 3, cipher modern)"
@@ -498,7 +498,7 @@ EOF
     echo -e "${C_Y}  PORT SSH BARU: $NEWP — sekarang saatnya reboot${C_0}"
     echo -e "${C_Y}  Setelah reboot, login:${C_0}"
     echo -e "${C_B}    ssh -p $NEWP root@$(hostname -I | awk '{print $1}')${C_0}"
-    echo -e "${C_Y}  Lalu jalankan: ${C_B}wpk closesmallport${C_0} ${C_Y}untuk tutup port 22${C_0}"
+    echo -e "${C_Y}  Lalu jalankan: ${C_B}jumanji closesmallport${C_0} ${C_Y}untuk tutup port 22${C_0}"
     echo -e "${C_Y}=======================================================${C_0}"
     echo -n "  Reboot server sekarang? (y/N): "
     read -r yn
@@ -528,8 +528,8 @@ EOF
 # ==============================================================
 cmd_add() {
   local D="$1"
-  [ -z "$D" ] && { err "pemakaian: wpk add <domain>"; exit 1; }
-  [ -f "$VHOST_TEMPLATE" ] || { err "base belum jalan — jalankan 'wpk base' dulu"; exit 1; }
+  [ -z "$D" ] && { err "pemakaian: jumanji add <domain>"; exit 1; }
+  [ -f "$VHOST_TEMPLATE" ] || { err "base belum jalan — jalankan 'jumanji base' dulu"; exit 1; }
   detect_phpver
 
   # self-heal: template wajib FULL (punya server{}); kalau inner-only/korup → tarik dari repo
@@ -552,7 +552,7 @@ cmd_add() {
   getent hosts "$D" >/dev/null &&     { RESOLVED_IP=$(getent ahostsv4 "$D" | awk '{print $1}' | head -1)
       [ -z "$RESOLVED_IP" ] && RESOLVED_IP=$(getent hosts "$D" | awk '{print $1}' | head -1)
       SERVER_IP=$(curl -s -m 3 ifconfig.me 2>/dev/null)
-      [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" != "$SERVER_IP" ] && warn "DNS $D mengarah ke $RESOLVED_IP, bukan IP server ini ($SERVER_IP) — periksa A record"; } ||     warn "DNS $D BELUM resolve — buat A record di Cloudflare (proxy MATI/awan abu), lalu 'wpk ssl $D' nanti"
+      [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" != "$SERVER_IP" ] && warn "DNS $D mengarah ke $RESOLVED_IP, bukan IP server ini ($SERVER_IP) — periksa A record"; } ||     warn "DNS $D BELUM resolve — buat A record di Cloudflare (proxy MATI/awan abu), lalu 'jumanji ssl $D' nanti"
 
   local DBNAME="wp_${D//./_}" DBUSER="u_${D//./_}"
   local DBPASS
@@ -606,7 +606,7 @@ CFGEOF
 
   # SSL (kalau DNS belum siap → lanjut HTTP, SSL bisa 'wpk ssl <domain>' belakangan)
   if ! cmd_ssl "$D"; then
-    warn "SSL dilewati dulu — site jalan via HTTP. Setelah DNS beres: wpk ssl $D"
+    warn "SSL dilewati dulu — site jalan via HTTP. Setelah DNS beres: jumanji ssl $D"
   fi
 
   # WordPress KOSONG — admin/password/judul di-setup via WIZARD WordPress di browser
@@ -627,7 +627,7 @@ CFGEOF
     if [ "$http_code" = "200" ] || [ "$http_code" = "302" ]; then
       ok "site siap: $URL (buka di browser untuk setup wizard)"
     else
-      warn "site belum merespon ($http_code) — cek: wpk repair $D"
+      warn "site belum merespon ($http_code) — cek: jumanji repair $D"
     fi
   fi
 
@@ -644,7 +644,7 @@ CFGEOF
   echo -e "  2. Wizard WordPress akan memandu: pilih bahasa → judul site →"
   echo -e "     username admin → password (BUAT YANG KUAT)"
   echo -e "  3. Selesai wizard → login: $URL/wp-login.php"
-  echo -e "  4. Opsional: ${C_B}wpk site $D${C_0} → 1 (install plugin+tema standar)"
+  echo -e "  4. Opsional: ${C_B}jumanji site $D${C_0} → 1 (install plugin+tema standar)"
   echo ""
   echo -e "  ${C_Y}Catatan: DB pass tersimpan di $REG_FILE${C_0}"
 }
@@ -653,12 +653,12 @@ CFGEOF
 #  COMMAND: ssl
 # ==============================================================
 cmd_ssl() {
-  local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk ssl <domain>"; exit 1; }
+  local D="$1"; [ -z "$D" ] && { err "pemakaian: jumanji ssl <domain>"; exit 1; }
   if [ -d "/etc/letsencrypt/live/$D" ] && grep -q "listen 443" "/etc/nginx/sites-available/$D" 2>/dev/null; then
     ok "SSL sudah ada: $D"; return
   fi
   [ -d "/etc/letsencrypt/live/$D" ] && ok "cert ada tapi vhost belum HTTPS — regen vhost..."
-  [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada — wpk add $D dulu"; exit 1; }
+  [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada — jumanji add $D dulu"; exit 1; }
 
   # pre-flight: DNS resolve + deteksi proxy Cloudflare (oren/grey) — keduanya tetap lanjut
   local RESOLVED_IP
@@ -706,7 +706,7 @@ cmd_ssl() {
       --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || {
         err "certbot gagal (DNS/grey-cloud). Solusi:"
         echo -e "   ${C_Y}1. Pastikan A record benar"
-        echo -e "   2. ATAU biarkan proxy oranye — jalankan lagi: wpk ssl $D (pakai CF Full mode)${C_0}"
+        echo -e "   2. ATAU biarkan proxy oranye — jalankan lagi: jumanji ssl $D (pakai CF Full mode)${C_0}"
         return 1; }
   fi
 
@@ -719,7 +719,7 @@ cmd_ssl() {
   else
     local EMSG; EMSG=$(nginx -t 2>&1 | tail -1)
     if echo "$EMSG" | grep -q "WPGLOBAL"; then
-      err "zone FastCGI belum ada — jalankan 'wpk base' dulu di server ini"
+      err "zone FastCGI belum ada — jalankan 'jumanji base' dulu di server ini"
     else
       err "nginx test gagal: $EMSG"
     fi
@@ -802,7 +802,7 @@ cmd_verify() {
   fi
   echo -e "  Selesai : $(date '+%d %b %Y %H:%M:%S')"
   echo ""
-  echo -e "  Lanjut:  ${C_B}wpk add <domain>${C_0}  untuk tiap site baru"
+  echo -e "  Lanjut:  ${C_B}jumanji add <domain>${C_0}  untuk tiap site baru"
 }
 
 # ==============================================================
@@ -842,14 +842,14 @@ cmd_status() {
 #  COMMAND: creds / backup / update / remove / security / optimize
 # ==============================================================
 cmd_creds() {
-  local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk creds <domain>"; exit 1; }
+  local D="$1"; [ -z "$D" ] && { err "pemakaian: jumanji creds <domain>"; exit 1; }
   local db dbuser admin pass
   db=$(reg_get "$D" 2); dbuser=$(reg_get "$D" 3); admin=$(reg_get "$D" 4); pass=$(reg_get "$D" 5)
   [ -z "$db" ] && { err "$D tidak terdaftar"; exit 1; }
   echo "  Domain : $D"
   if [ "$admin" = "wizard-setup" ]; then
     echo "  Admin  : (di-setup via wizard browser — belum/belum dicatat)"
-    echo "           setelah wizard, catat manual atau: wpk site $D → 5c reset"
+    echo "           setelah wizard, catat manual atau: jumanji site $D → 5c reset"
   else
     echo "  Admin  : $admin / $pass"
   fi
@@ -862,7 +862,7 @@ cmd_creds() {
 }
 
 cmd_backup() {
-  local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk backup <domain>"; exit 1; }
+  local D="$1"; [ -z "$D" ] && { err "pemakaian: jumanji backup <domain>"; exit 1; }
   local db; db=$(reg_get "$D" 2)
   [ -z "$db" ] && { err "$D tidak terdaftar"; exit 1; }
   local out="$BACKUP_DIR/$D-$(date +%F-%H%M)"
@@ -882,7 +882,7 @@ cmd_backup_all() {
 }
 
 cmd_update() {
-  local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk update <domain>"; exit 1; }
+  local D="$1"; [ -z "$D" ] && { err "pemakaian: jumanji update <domain>"; exit 1; }
   [ -d "/var/www/$D" ] || { err "/var/www/$D tidak ada"; exit 1; }
   local wp="sudo -u www-data /usr/local/bin/wp --path=/var/www/$D"
   $wp core update --quiet && ok "core updated: $D"
@@ -892,7 +892,7 @@ cmd_update() {
 }
 
 cmd_remove() {
-  local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk remove <domain>"; exit 1; }
+  local D="$1"; [ -z "$D" ] && { err "pemakaian: jumanji remove <domain>"; exit 1; }
   local db dbuser; db=$(reg_get "$D" 2); dbuser=$(reg_get "$D" 3)
   read -rp "HAPUS $D permanen? (ketik YES): " konf
   [ "$konf" = "YES" ] || { warn "dibatalkan"; return; }
@@ -908,7 +908,7 @@ cmd_remove() {
 
 cmd_security() {
   hdr "SECURITY AUDIT + RE-APPLY"
-  grep -q "wplogin" /etc/nginx/conf.d/wpk.conf 2>/dev/null || { warn "config nginx wpk hilang — jalankan 'wpk base' untuk re-apply penuh"; return; }
+  grep -q "wplogin" /etc/nginx/conf.d/wpk.conf 2>/dev/null || { warn "config nginx jumanji hilang — jalankan 'jumanji base' untuk re-apply penuh"; return; }
   systemctl is-active --quiet fail2ban && ok "fail2ban aktif" || { systemctl restart fail2ban; ok "fail2ban direstart"; }
   ufw status | grep -q "Status: active" && ok "ufw aktif" || { ufw --force enable; ok "ufw di-enable"; }
   [ "$(ss -tulnp | grep -cE ':(3306|25|6379)\s')" = "0" ] && ok "3306/25/6379 tertutup dari luar" || warn "ada port sensitif terbuka!"
@@ -946,7 +946,7 @@ cmd_site() {
   detect_phpver
   if [ -z "$D" ]; then
     hdr "PILIH SITE"
-    [ -s "$REG_FILE" ] || { warn "belum ada site — wpk add <domain> dulu"; return; }
+    [ -s "$REG_FILE" ] || { warn "belum ada site — jumanji add <domain> dulu"; return; }
     local i=1; local DOMAINS=()
     while IFS='|' read -r d _; do
       [ -z "$d" ] && continue
@@ -1189,7 +1189,7 @@ cmd_banner() {
     echo "  Server : $(hostname) ($(curl -s -m 3 ifconfig.me 2>/dev/null || echo 'ip-unknown'))"
     echo "  RAM    : $(free -h | sed -n 2p | awk '{print $3" / "$2}')"
     echo "  Sites  : $(wc -l < /root/wpk-sites.reg 2>/dev/null | tr -d ' ') terdaftar"
-    echo "  Help   : wpk  (menu)  |  wpk status  |  wpk verify"
+    echo "  Help   : jumanji  (menu)  |  jumanji status  |  jumanji verify"
     echo ""
   } > "$D"
   # update-shown motd kadang menimpa — matikan (aman jika tak ada)
@@ -1322,7 +1322,7 @@ opcache.jit_buffer_size=64M
 EOF
       php-fpm$PHPV -t >/dev/null 2>&1 && systemctl restart php$PHPV-fpm
     else
-      err "direktori PHP-FPM tidak ditemukan — PHP belum terpasang? jalankan 'wpk base' dulu"
+      err "direktori PHP-FPM tidak ditemukan — jalankan 'jumanji base' dulu"
     fi
     jit_val=$(php -r 'echo ini_get("opcache.jit_buffer_size");' 2>/dev/null)
   fi
@@ -1333,7 +1333,7 @@ EOF
   fi
 
   echo ""
-  echo -e "  Diperbaiki: ${C_G}$fixed poin${C_0} — cek ulang: ${C_B}wpk verify${C_0}"
+  echo -e "  Diperbaiki: ${C_G}$fixed poin${C_0} — cek ulang: ${C_B}jumanji verify${C_0}"
 }
 
 # ==============================================================
@@ -1355,14 +1355,14 @@ cmd_update_self() {
   [ -s /root/wpk-watchdog.sh ] && chmod +x /root/wpk-watchdog.sh
   ln -sf /root/wpk.sh /usr/local/bin/wpk 2>/dev/null
   ln -sf /root/wpk.sh /usr/local/bin/jumanji 2>/dev/null
-  ok "JUMANJI updated → jalankan ulang: wpk"
+  ok "JUMANJI updated → jalankan ulang: jumanji"
 }
 
 # ==============================================================
 #  COMMAND: repair — pulihkan site yang setengah terpasang
 # ==============================================================
 cmd_repair() {
-  local D="$1"; [ -z "$D" ] && { err "pemakaian: wpk repair <domain>"; exit 1; }
+  local D="$1"; [ -z "$D" ] && { err "pemakaian: jumanji repair <domain>"; exit 1; }
   hdr "REPAIR — $D"
   detect_phpver
   [ -d "/var/www/$D" ] || { err "docroot tidak ada"; exit 1; }
@@ -1397,11 +1397,11 @@ cmd_repair() {
     chmod 600 "/var/www/$D/wp-config.php"
     ok "wp-config dibuat ulang bersih (creds: $DBNAME/$DBUSER)"
   else
-    err "wp-config tidak ada — jalankan wpk add"; exit 1
+    err "wp-config tidak ada — jalankan jumanji add"; exit 1
   fi
 
   # vhost: regen dari template — TAPI template di disk mungkin lama; regen template dulu dari wpk.sh
-  [ -s "$VHOST_TEMPLATE" ] || { err "template tidak ada — wpk self-update dulu"; exit 1; }
+  [ -s "$VHOST_TEMPLATE" ] || { err "template tidak ada — jumanji self-update dulu"; exit 1; }
   # pastikan template punya ^~ acme (bila file lama, patch)
   sed -i 's|^    location /\.well-known/acme-challenge/|    location ^~ /.well-known/acme-challenge/|' "$VHOST_TEMPLATE"
   sed -e "s/__DOMAIN__/$D/g" -e "s|__SOCKET__|$(socket_path)|g" "$VHOST_TEMPLATE" > "/etc/nginx/sites-available/$D"
@@ -1481,7 +1481,7 @@ cmd_alerts() {
 #  COMMAND: watchdog — pasang/paksa jalan watchdog
 # ==============================================================
 cmd_watchdog() {
-  [ -f /root/wpk-watchdog.sh ] || { err "wpk-watchdog.sh tidak ada — wpk self-update dulu"; return; }
+  [ -f /root/wpk-watchdog.sh ] || { err "watchdog tidak ada — jumanji self-update dulu"; return; }
   chmod +x /root/wpk-watchdog.sh
   if ! grep -q "wpk-watchdog" /etc/crontab 2>/dev/null; then
     echo "*/15 * * * * root /bin/bash /root/wpk-watchdog.sh >/dev/null 2>&1" >> /etc/crontab
@@ -1590,5 +1590,5 @@ case "$1" in
   optimize)   cmd_optimize;;
   menu|"" )   cmd_menu;;
   *) echo "JUMANJI v4.0 — perintah tidak dikenal: $1"
-     echo "Pakai: wpk | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
+     echo "Pakai: jumanji | base | verify | fix | add | banner | ssl | list | status | creds | backup | backup-all | update | remove | security | optimize";;
 esac
