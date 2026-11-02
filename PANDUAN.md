@@ -24,9 +24,16 @@ curl -fsSL https://raw.githubusercontent.com/triosptr/wpk-server/main/wpk.sh -o 
 Di menu ketik: **9**
 → 8 step otomatis (nginx, PHP 8.3 JIT, MariaDB, swap, BBR, firewall,
    fail2ban, hardening) ± 3-5 menit
-→ diakhiri **CHECKLIST VERIFIKASI 17 POIN**
-→ target: `>>> SEMUA 17/17 CEK LOLOS — SERVER SIAP DIGUNAKAN <<<`
+→ diakhiri **CHECKLIST VERIFIKASI 17/18 POIN**
+→ target: `>>> SEMUA CEK LOLOS — SERVER SIAP DIGUNAKAN <<<`
 → kalau ada yang merah: ketik `wpk fix` lalu `wpk verify`
+
+**Ganti port SSH (diminta saat install):**
+- Script minta port baru — isi angka 999-1999 (misal `1877`)
+- Setelah install selesai, script tanya reboot → jawab `y`
+- Setelah reboot, login: `ssh -p 1877 root@IP_SERVER`
+- Lalu jalankan: `wpk closesmallport` (tutup port 22)
+- Selanjutnya SELALU login via port baru
 
 ## LANGKAH 4 — Pasang banner JUMANJI (opsional tapi keren)
 Di menu ketik: **10**

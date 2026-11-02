@@ -435,8 +435,8 @@ EOF
   systemctl restart fail2ban
   ok "fail2ban aktif (sshd ban 4 jam + nginx rate-limit)"
 
-  # ---------- 8. SSH ----------
-  step 8 "SSH hardening (akses Bapak tetap utuh)"
+  # ---------- 8. SSH + ganti port (interaktif, anti-lockout) ----------
+  step 8 "SSH hardening + ganti port (rekomendasi 999-1999)"
   cat > /etc/ssh/sshd_config.d/99-wpk.conf <<'EOF'
 X11Forwarding no
 MaxAuthTries 3
@@ -451,10 +451,65 @@ KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-grou
 ClientAliveCountMax 2
 UseDNS no
 EOF
+  # port baru: tanya manual, validasi
+  NEW_SSH_PORT=""
+  while true; do
+    echo -n "  Masukkan port SSH baru (rekomendasi 999-1999, kosongkan = tetap 22): "
+    read -r NEW_SSH_PORT
+    if [ -z "$NEW_SSH_PORT" ]; then
+      ok "port tetap 22 (tidak diganti)"
+      break
+    fi
+    if ! [[ "$NEW_SSH_PORT" =~ ^[0-9]+$ ]]; then
+      echo -e "  ${C_R}harus angka${C_0}"; continue
+    fi
+    if [ "$NEW_SSH_PORT" -lt 999 ] || [ "$NEW_SSH_PORT" -gt 1999 ]; then
+      echo -e "  ${C_Y}rekomendasi 999-1999 — pakai port ini tetap boleh? (y/n)${C_0}"
+      read -r yn; [ "$yn" = "y" ] || continue
+    fi
+    if [ "$NEW_SSH_PORT" = "22" ]; then echo -e "  ${C_R}port 22 tidak boleh di-set ulang${C_0}"; continue; fi
+    break
+  done
+  if [ -n "$NEW_SSH_PORT" ] && [ "$NEW_SSH_PORT" != "22" ]; then
+    # simpan port utk dipakai script lain & reboot notice
+    echo "$NEW_SSH_PORT" > /root/wpk-ssh-port
+    # drop-in: dual port sementara (22 + baru) — anti-lockout: hanya hapus 22 SETELAH user konfirm login via port baru
+    cat > /etc/ssh/sshd_config.d/98-wpk-port.conf <<EOF
+Port 22
+Port $NEW_SSH_PORT
+EOF
+    ufw allow "$NEW_SSH_PORT/tcp" >/dev/null 2>&1
+    sshd -t && systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
+    ok "SSH dual-port aktif: 22 + $NEW_SSH_PORT (anti-lockout)"
+    echo -e "  ${C_Y}PENTING: setelah selesai & reboot, login via:${C_0}"
+    echo -e "    ${C_B}ssh -p $NEW_SSH_PORT root@$(hostname -I | awk '{print $1}')${C_0}"
+    echo -e "  ${C_Y}Setelah login sukses via port baru, port 22 ditutup otomatis oleh watchdog / jalankan: wpk closesmallport${C_0}"
+  fi
   sshd -t && systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
-  ok "SSH: MaxAuthTries 3 + cipher kuat (chacha20/aes-gcm) — port & password TIDAK diubah"
+  ok "SSH hardening selesai (MaxAuthTries 3, cipher modern)"
 
   touch "$REG_FILE" && chmod 600 "$REG_FILE"
+
+  # ---------- REBOOT PROMPT (kalau port SSH diganti) ----------
+  if [ -f /root/wpk-ssh-port ]; then
+    NEWP=$(cat /root/wpk-ssh-port)
+    echo ""
+    echo -e "${C_Y}=======================================================${C_0}"
+    echo -e "${C_Y}  PORT SSH BARU: $NEWP — sekarang saatnya reboot${C_0}"
+    echo -e "${C_Y}  Setelah reboot, login:${C_0}"
+    echo -e "${C_B}    ssh -p $NEWP root@$(hostname -I | awk '{print $1}')${C_0}"
+    echo -e "${C_Y}  Lalu jalankan: ${C_B}wpk closesmallport${C_0} ${C_Y}untuk tutup port 22${C_0}"
+    echo -e "${C_Y}=======================================================${C_0}"
+    echo -n "  Reboot server sekarang? (y/N): "
+    read -r yn
+    if [ "$yn" = "y" ]; then
+      ok "rebooting — tunggu ±1 menit lalu login via port $NEWP"
+      sleep 2; reboot
+      exit 0
+    else
+      warn "reboot ditunda — ingat login via port $NEWP setelah restart manual"
+    fi
+  fi
 
   # ---------- WATCHDOG: pengawal otomatis (cron 15 menit) ----------
   if [ -f /root/wpk-watchdog.sh ]; then
@@ -716,8 +771,9 @@ cmd_verify() {
   [ -d /etc/nginx/fcgi_cache ] && { [ -f /etc/nginx/conf.d/wpk.conf ] && grep -q WPGLOBAL /etc/nginx/conf.d/wpk.conf; }; v 12 "FastCGI cache zone WPGLOBAL siap" $?
   # 13 templates
   [ -f "$VHOST_TEMPLATE" ] && [ -f "$WP_CONFIG_EXTRA" ]; v 13 "Template vhost + wp-config hardening ada" $?
-  # 14 ssh config
+  # 14 ssh config (+ port custom info)
   sshd -T 2>/dev/null | grep -q "maxauthtries 3"; v 14 "SSH hardening aktif (MaxAuthTries 3)" $?
+  [ -f /root/wpk-ssh-port ] && echo -e "  ${C_Y}[info] SSH port custom: $(cat /root/wpk-ssh-port) — pastikan login via port itu${C_0}"
   # 15 jit (baca dari konfig PHP-FPM SAPI, bukan CLI)
   php-fpm$PHPV -i 2>/dev/null | grep -qE "opcache.jit_buffer_size => (64M|67108864)"; v 15 "PHP JIT aktif (64M)" $?
   # 16 kernel hardening
@@ -1376,6 +1432,36 @@ cmd_repair() {
 }
 
 # ==============================================================
+#  COMMAND: closesmallport — finalisasi perpindahan SSH port
+# ==============================================================
+cmd_closesmallport() {
+  local PF="/root/wpk-ssh-port"
+  [ -f "$PF" ] || { ok "port SSH tidak diganti — tidak ada yang ditutup"; return; }
+  local NEWP; NEWP=$(cat "$PF")
+  local CUR
+  CUR=$(ss -tnp 2>/dev/null | grep sshd | grep -oE ':(22|'"$NEWP"')' | sort -u | tr -d ':' | tr '\n' ' ')
+  echo -e "  Sesi aktif di port: $CUR"
+  case "$CUR" in
+    *"$NEWP"*)
+      # user login via port baru → aman tutup 22
+      sed -i '/^Port 22$/d' /etc/ssh/sshd_config.d/98-wpk-port.conf
+      # sisakan hanya port baru di drop-in
+      if ! grep -q "^Port" /etc/ssh/sshd_config.d/98-wpk-port.conf; then
+        echo "Port $NEWP" > /etc/ssh/sshd_config.d/98-wpk-port.conf
+      fi
+      ufw delete allow 22/tcp >/dev/null 2>&1
+      sshd -t && systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
+      ok "port 22 DITUTUP — SSH hanya via port $NEWP"
+      echo -e "  ${C_G}Setup port selesai. Jangan lupa simpan: ssh -p $NEWP root@server${C_0}"
+      ;;
+    *22*)
+      err "Anda masih login via port 22 — login dulu via port $NEWP, lalu jalankan lagi"
+      echo -e "  ${C_Y}ssh -p $NEWP root@server${C_0}"
+      ;;
+  esac
+}
+
+# ==============================================================
 #  COMMAND: alerts — lihat temuan watchdog
 # ==============================================================
 cmd_alerts() {
@@ -1433,6 +1519,7 @@ cmd_menu() {
     echo "  12) REPAIR site bermasalah"
     echo "  13) ALERTS — temuan watchdog"
     echo "  14) Pasang/jalankan watchdog"
+    echo "  15) Tutup port 22 (finalisasi port SSH baru)"
     echo "   0) Keluar"
     echo ""
     read -rp "  Pilih: " p
@@ -1451,6 +1538,7 @@ cmd_menu() {
       12) read -rp "  Domain: " d; [ -n "$d" ] && cmd_repair "$d";;
       13) cmd_alerts;;
       14) cmd_watchdog;;
+      15) cmd_closesmallport;;
       0) exit 0;;
       "") exit 0;;
     esac
@@ -1492,6 +1580,7 @@ case "$1" in
   server)     cmd_server;;
   self-update) cmd_update_self;;
   repair)     shift; cmd_repair "$@";;
+  closesmallport) cmd_closesmallport;;
   alerts)     cmd_alerts;;
   watchdog)   cmd_watchdog;;
   banner)     shift; cmd_banner "$@";;
