@@ -1439,10 +1439,10 @@ cmd_closesmallport() {
   [ -f "$PF" ] || { ok "port SSH tidak diganti — tidak ada yang ditutup"; return; }
   local NEWP; NEWP=$(cat "$PF")
   local CUR
-  CUR=$(ss -tnp 2>/dev/null | grep sshd | grep -oE ':(22|'"$NEWP"')' | sort -u | tr -d ':' | tr '\n' ' ')
+  CUR=$(ss -tnp 2>/dev/null | grep sshd | grep -oE ':(22|'"$NEWP"')\b' | sort -u | tr -d ':' | tr '\n' ' ')
   echo -e "  Sesi aktif di port: $CUR"
-  case "$CUR" in
-    *"$NEWP"*)
+  # exact word match (bukan substring — NEWP=877 tidak boleh cocok 1877)
+  if echo " $CUR " | grep -q " $NEWP "; then
       # user login via port baru → aman tutup 22
       sed -i '/^Port 22$/d' /etc/ssh/sshd_config.d/98-wpk-port.conf
       # sisakan hanya port baru di drop-in
@@ -1452,13 +1452,14 @@ cmd_closesmallport() {
       ufw delete allow 22/tcp >/dev/null 2>&1
       sshd -t && systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
       ok "port 22 DITUTUP — SSH hanya via port $NEWP"
+      rm -f "$PF"
       echo -e "  ${C_G}Setup port selesai. Jangan lupa simpan: ssh -p $NEWP root@server${C_0}"
-      ;;
-    *22*)
+  elif echo " $CUR " | grep -q " 22 "; then
       err "Anda masih login via port 22 — login dulu via port $NEWP, lalu jalankan lagi"
       echo -e "  ${C_Y}ssh -p $NEWP root@server${C_0}"
-      ;;
-  esac
+  else
+      warn "tidak ada sesi SSH aktif terdeteksi — pastikan login via port $NEWP berjalan sebelum menutup 22"
+  fi
 }
 
 # ==============================================================
