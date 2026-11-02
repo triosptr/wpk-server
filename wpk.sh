@@ -73,6 +73,20 @@ install_wpcli() {
   return 1
 }
 
+# ---------- helper: deteksi Cloudflare proxy ----------
+cf_is_proxied() { # return 0 kalau domain di-proxy CF (oren)
+  local D="$1" R SERVER_IP
+  R=$(getent ahostsv4 "$D" 2>/dev/null | awk '{print $1}' | head -1)
+  SERVER_IP=$(curl -s -m 3 ifconfig.me 2>/dev/null)
+  [ -z "$R" ] && return 2              # tidak resolve
+  [ -n "$SERVER_IP" ] && [ "$R" = "$SERVER_IP" ] && return 1  # grey (langsung)
+  # IP yang resolve ≠ server → CF proxy (oren) ATAU salah arah. Cek ASN CF via RDAP ringan:
+  if curl -s -m 5 "https://ipinfo.io/$R" 2>/dev/null | grep -qi "cloudflare"; then
+    return 0                            # oren
+  fi
+  return 2                              # resolve tapi bukan server & bukan CF = salah arah
+}
+
 # ---------- helpers ----------
 detect_phpver() {
   for v in 8.3 8.2 8.1 8.0; do
@@ -566,20 +580,28 @@ cmd_ssl() {
   [ -d "/etc/letsencrypt/live/$D" ] && ok "cert ada tapi vhost belum HTTPS — regen vhost..."
   [ -f "/etc/nginx/sites-available/$D" ] || { err "vhost $D tidak ada — wpk add $D dulu"; exit 1; }
 
-  # pre-flight DNS (hindari buang kuota rate-limit Let's Encrypt: 5 gagal/jam)
-  local RESOLVED_IP SERVER_IP
+  # pre-flight: DNS resolve + deteksi proxy Cloudflare (oren/grey) — keduanya tetap lanjut
+  local RESOLVED_IP
   RESOLVED_IP=$(getent ahostsv4 "$D" 2>/dev/null | awk '{print $1}' | head -1)
-  SERVER_IP=$(curl -s -m 3 ifconfig.me 2>/dev/null)
   if [ -z "$RESOLVED_IP" ]; then
-    err "DNS $D belum resolve — buat A record di Cloudflare (proxy awan MATI/grey), tunggu 1-2 menit, ulangi"
+    err "DNS $D belum resolve — buat A record di Cloudflare, tunggu 1-2 menit, ulangi"
     return 1
   fi
-  if [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" != "$SERVER_IP" ]; then
-    err "DNS $D -> $RESOLVED_IP, bukan IP server ini ($SERVER_IP)"
-    echo -e "   ${C_Y}Perbaiki A record di Cloudflare (proxy MATI/grey), lalu ulangi${C_0}"
+  local MODE=""
+  cf_is_proxied "$D"; local CF=$?
+  if [ $CF = 0 ]; then
+    MODE="CF-PROXIED"
+    ok "Cloudflare proxy ON (awan oranye) terdeteksi — install tetap jalan"
+    echo -e "   ${C_Y}→ SSL browser ditangani cert Cloudflare edge${C_0}"
+    echo -e "   ${C_Y}→ origin pakai self-signed (mode CF: Full)${C_0}"
+  elif [ $CF = 1 ]; then
+    MODE="GREY"
+    ok "DNS OK (proxy OFF/grey): $D -> $RESOLVED_IP"
+  else
+    err "DNS $D -> $RESOLVED_IP bukan IP server ini & bukan Cloudflare"
+    echo -e "   ${C_Y}Periksa A record di Cloudflare${C_0}"
     return 1
   fi
-  ok "DNS OK: $D -> $RESOLVED_IP"
   # pastikan vhost pakai ^~ untuk acme (override deny dotfiles regex)
   if [ -f "/etc/nginx/sites-available/$D" ] && grep -q "^    location /\.well-known/acme-challenge/" "/etc/nginx/sites-available/$D"; then
     sed -i 's|^    location /\.well-known/acme-challenge/|    location ^~ /.well-known/acme-challenge/|' "/etc/nginx/sites-available/$D"
@@ -587,13 +609,26 @@ cmd_ssl() {
   fi
   chmod -R 755 /var/www/_letsencrypt 2>/dev/null
   mkdir -p /var/www/_letsencrypt/.well-known/acme-challenge
-  certbot certonly --webroot -w /var/www/_letsencrypt -d "$D" \
-    --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || {
-      err "certbot gagal. Cek:"
-      echo -e "   ${C_Y}1. A record $D -> IP server ini (Cloudflare DNS)"
-      echo -e "   2. Proxy awan MATI (grey cloud / DNS only) — bukan oranye"
-      echo -e "   3. Perbaiki lalu jalankan ulang: wpk ssl $D${C_0}"
-      return; }
+  if [ "$MODE" = "CF-PROXIED" ]; then
+    # origin self-signed (Cloudflare Full mode) — browser tetap pakai cert CF edge
+    local SS="/etc/ssl/wpk-selfsigned/$D"
+    mkdir -p "$SS"
+    if [ ! -f "$SS/privkey.pem" ]; then
+      openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+        -keyout "$SS/privkey.pem" -out "$SS/fullchain.pem" \
+        -subj "/CN=$D" >/dev/null 2>&1
+    fi
+    # tulis penanda utk generator: cert path self-signed
+    echo "$SS" > "/root/wpk-certpath-$D"
+    ok "self-signed origin cert dibuat ($SS)"
+  else
+    certbot certonly --webroot -w /var/www/_letsencrypt -d "$D" \
+      --non-interactive --agree-tos -m "info@${D#*.}" --no-eff-email || {
+        err "certbot gagal (DNS/grey-cloud). Solusi:"
+        echo -e "   ${C_Y}1. Pastikan A record benar"
+        echo -e "   2. ATAU biarkan proxy oranye — jalankan lagi: wpk ssl $D (pakai CF Full mode)${C_0}"
+        return 1; }
+  fi
 
   # patch vhost → regen HTTPS dari template (bersih, tak bisa merusak struktur)
   python3 /root/wpk_ssl_gen.py "$D"
