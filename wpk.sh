@@ -411,8 +411,15 @@ EOF
   ufw --force reset >/dev/null
   ufw default deny incoming; ufw default allow outgoing
   ufw allow 22/tcp; ufw allow 80/tcp; ufw allow 443/tcp
+  # port SSH custom (kalau pernah diganti) ikut di-whitelist
+  if [ -f /root/wpk-ssh-port ]; then
+    CUSTOMP=$(cat /root/wpk-ssh-port)
+    ufw allow "$CUSTOMP/tcp" >/dev/null 2>&1
+    ok "ufw aktif — 22/80/443 + $CUSTOMP terbuka"
+  else
+    ok "ufw aktif — hanya 22/80/443 terbuka"
+  fi
   ufw --force enable >/dev/null
-  ok "ufw aktif — hanya 22/80/443 terbuka"
   cat > /etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
 bantime = 1h
@@ -451,11 +458,17 @@ KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-grou
 ClientAliveCountMax 2
 UseDNS no
 EOF
-  # port baru: tanya manual, validasi
-  NEW_SSH_PORT=""
-  while true; do
+  # port baru: kalau pernah di-set (file ada), pakai yang lama — tidak tanya ulang
+  if [ -f /root/wpk-ssh-port ]; then
+    NEW_SSH_PORT=$(cat /root/wpk-ssh-port)
+    # kalau closesmallport sudah finalisasi (port 22 sudah ditutup), drop-in sudah benar — skip
+    ok "SSH port custom tetap: $NEW_SSH_PORT (tidak diubah)"
+  fi
+  NEW_SSH_PORT_SET=""
+  while [ -z "$NEW_SSH_PORT" ]; do
     echo -n "  Masukkan port SSH baru (rekomendasi 999-1999, kosongkan = tetap 22): "
-    read -r NEW_SSH_PORT
+    read -r NEW_SSH_PORT_SET
+    NEW_SSH_PORT="$NEW_SSH_PORT_SET"
     if [ -z "$NEW_SSH_PORT" ]; then
       ok "port tetap 22 (tidak diganti)"
       break
